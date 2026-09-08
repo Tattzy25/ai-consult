@@ -6,7 +6,7 @@ interface WreckShaderProps {
   visualMode: 'idle' | 'listening' | 'speaking';
 }
 
-export const WreckShader: React.FC<WreckShaderProps> = ({ audioLevel, visualMode }) => {
+export const WreckShader: React.FC<WreckShaderProps> = ({ audioLevel, visualMode }: WreckShaderProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const audioLevelRef = useRef(audioLevel);
   const visualModeRef = useRef(visualMode);

@@ -1,10 +1,11 @@
 import { useCallback, useRef, useState } from "react";
 import { GoogleGenAI, Modality, type LiveServerMessage } from "@google/genai";
 import { toast } from "sonner";
+import { TATTOO_SHOP_TOOLS, AGENT_PROFILE_URL, MCP_ENDPOINT } from "../lib/gemini-tools";
 
 const INPUT_RATE = 16000;
 const OUTPUT_RATE = 24000;
-const OUTPUT_PREBUFFER_SAMPLES = 2400; // 100ms at 24k
+const OUTPUT_PREBUFFER_SAMPLES = 2400; 
 const VIDEO_INTERVAL_MS = 500;
 
 type LiveSystemMessageSettings = {
@@ -32,7 +33,10 @@ function base64ToPCM16(base64: string): Int16Array {
   return new Int16Array(bytes.buffer);
 }
 
-export function useGeminiLive(systemMessageSettings: LiveSystemMessageSettings) {
+export function useGeminiLive(
+  systemMessageSettings: LiveSystemMessageSettings, 
+  onToolResult?: (data: any) => void
+) {
   const [isConnected, setIsConnected] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
@@ -42,7 +46,8 @@ export function useGeminiLive(systemMessageSettings: LiveSystemMessageSettings) 
   const [isUserTalking, setIsUserTalking] = useState(false);
   const [status, setStatus] = useState<"idle" | "connecting" | "live" | "error">("idle");
   const [transcript, setTranscript] = useState<TranscriptItem[]>([]);
-  const [sessionDurationMs, setSessionDurationMs] = useState(0);  const [consentTranscription, setConsentTranscriptionState] = useState(false);
+  const [sessionDurationMs, setSessionDurationMs] = useState(0);  
+  const [consentTranscription, setConsentTranscriptionState] = useState(false);
 
   const isMutedRef = useRef(false);
   const isVideoEnabledRef = useRef(true);
@@ -123,40 +128,32 @@ export function useGeminiLive(systemMessageSettings: LiveSystemMessageSettings) 
       cancelAnimationFrame(rafIdRef.current);
       rafIdRef.current = null;
     }
-
     stopVideoCapture();
-
     if (inputNodeRef.current) {
       inputNodeRef.current.port.onmessage = null;
       inputNodeRef.current.disconnect();
       inputNodeRef.current = null;
     }
-
     if (outputNodeRef.current) {
       outputNodeRef.current.disconnect();
       outputNodeRef.current = null;
     }
-
     if (analyserRef.current) {
       analyserRef.current.disconnect();
       analyserRef.current = null;
     }
-
     if (audioSourceRef.current) {
       audioSourceRef.current.disconnect();
       audioSourceRef.current = null;
     }
-
     if (silentGainRef.current) {
       silentGainRef.current.disconnect();
       silentGainRef.current = null;
     }
-
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current.getTracks().forEach((t: MediaStreamTrack) => t.stop());
       streamRef.current = null;
     }
-
     setMicVolume(0);
     setIsUserTalking(false);
   }, [stopVideoCapture]);
@@ -166,7 +163,6 @@ export function useGeminiLive(systemMessageSettings: LiveSystemMessageSettings) 
     pendingOutputSamplesRef.current = 0;
     playbackPrimedRef.current = false;
     setIsAudioPlaying(false);
-
     if (outputNodeRef.current) {
       outputNodeRef.current.port.postMessage({ type: "flush" });
     }
@@ -264,7 +260,7 @@ export function useGeminiLive(systemMessageSettings: LiveSystemMessageSettings) 
         outputChannelCount: [1],
       });
 
-      outputNodeRef.current.port.onmessage = (event) => {
+      outputNodeRef.current.port.onmessage = (event: MessageEvent) => {
         if (event.data?.type === "underrun") setIsAudioPlaying(false);
       };
 
@@ -314,13 +310,13 @@ export function useGeminiLive(systemMessageSettings: LiveSystemMessageSettings) 
       const avg = sum / dataArray.length;
       const volume = Math.min(1, avg / 128);
 
-      setMicVolume((prev) => {
+      setMicVolume((prev: number) => {
         if (volume === 0 && prev === 0) return prev;
         if (Math.abs(prev - volume) < 0.02) return prev;
         return volume;
       });
 
-      setIsUserTalking((prev) => {
+      setIsUserTalking((prev: boolean) => {
         if (prev && volume < 0.1) return false;
         if (!prev && volume >= 0.15) return true;
         return prev;
@@ -376,7 +372,7 @@ export function useGeminiLive(systemMessageSettings: LiveSystemMessageSettings) 
     cameraFacingRef.current = nextFacing;
     setCameraFacing(nextFacing);
 
-    streamRef.current.getVideoTracks().forEach((track) => {
+    streamRef.current.getVideoTracks().forEach((track: MediaStreamTrack) => {
       track.stop();
       streamRef.current?.removeTrack(track);
     });
@@ -447,6 +443,7 @@ export function useGeminiLive(systemMessageSettings: LiveSystemMessageSettings) 
           config: {
             responseModalities: [Modality.AUDIO],
             systemInstruction: systemMessageSettings.systemInstruction,
+            tools: TATTOO_SHOP_TOOLS as any,
             speechConfig: {
               voiceConfig: {
                 prebuiltVoiceConfig: { voiceName: selectedVoice },
@@ -469,6 +466,44 @@ export function useGeminiLive(systemMessageSettings: LiveSystemMessageSettings) 
               beginSessionTracking();
             },
             onmessage: async (message: LiveServerMessage) => {
+              if (message.toolCall) {
+                const calls = message.toolCall.functionCalls;                  if (!calls) return;                for (const call of calls) {
+                  const { name, args, id } = call;
+                  try {
+                    const response = await fetch(MCP_ENDPOINT, {
+                    method: "POST",
+                    headers: {
+                     "Content-Type": "application/json",
+                      },
+                      body: JSON.stringify({
+                      meta: {
+                      "ucp-agent": {
+                      profile: AGENT_PROFILE_URL,
+                      },
+                    },
+                  ...args,
+                }),
+            });
+
+                     const rawBody = await response.text();
+                     const toolData = JSON.parse(rawBody);
+                    
+                    if (onToolResult) {
+                      onToolResult(toolData);
+                    }
+
+                    sessionRef.current.sendToolResponse({
+                      functionResponses: [{ name, id, response: { result: toolData } }],
+                    });
+                  } catch (err) {
+                    sessionRef.current.sendToolResponse({
+                      functionResponses: [{ name, id, response: { error: "Catalog unavailable" } }],
+                    });
+                  }
+                }
+                return;
+              }
+
               if (message.serverContent?.interrupted) {
                 resetPlayback();
               }
@@ -480,12 +515,12 @@ export function useGeminiLive(systemMessageSettings: LiveSystemMessageSettings) 
               if (consentTranscriptionRef.current) {
                 const inputTranscript = message.serverContent?.inputTranscription?.text;
                 if (inputTranscript) {
-                  setTranscript((prev) => [...prev, { role: "user", text: inputTranscript }]);
+                  setTranscript((prev: TranscriptItem[]) => [...prev, { role: "user", text: inputTranscript }]);
                 }
 
                 const outputTranscript = message.serverContent?.outputTranscription?.text;
                 if (outputTranscript) {
-                  setTranscript((prev) => [...prev, { role: "tatty", text: outputTranscript }]);
+                  setTranscript((prev: TranscriptItem[]) => [...prev, { role: "tatty", text: outputTranscript }]);
                 }
               }
 
@@ -496,7 +531,7 @@ export function useGeminiLive(systemMessageSettings: LiveSystemMessageSettings) 
                   enqueueOutputPCM(pcm);
                 }
                 if (part.text && consentTranscriptionRef.current) {
-                  setTranscript((prev) => [...prev, { role: "tatty", text: part.text! }]);
+                  setTranscript((prev: TranscriptItem[]) => [...prev, { role: "tatty", text: part.text! }]);
                 }
               }
             },
@@ -516,15 +551,15 @@ export function useGeminiLive(systemMessageSettings: LiveSystemMessageSettings) 
               }
               manualDisconnectRef.current = false;
             },
-            onerror: (error) => {
+            onerror: (error: any) => {
               isSessionOpenRef.current = false;
               resumptionHandleRef.current = null;
               endSessionTracking();
               cleanupMedia();
               resetPlayback();
               sessionRef.current = null;
-              setIsConnected(false);
               setStatus("error");
+              setIsConnected(false);
               setSessionDurationMs(0);
               manualDisconnectRef.current = true;
               toast.error(error instanceof Error ? error.message : "Live API error");
@@ -554,6 +589,7 @@ export function useGeminiLive(systemMessageSettings: LiveSystemMessageSettings) 
       resetPlayback,
       startStreaming,
       systemMessageSettings,
+      onToolResult,
     ],
   );
 
@@ -563,7 +599,7 @@ export function useGeminiLive(systemMessageSettings: LiveSystemMessageSettings) 
   }, []);
 
   const toggleMute = useCallback(() => {
-    setIsMuted((prev) => {
+    setIsMuted((prev: boolean) => {
       const next = !prev;
       isMutedRef.current = next;
 
@@ -576,12 +612,12 @@ export function useGeminiLive(systemMessageSettings: LiveSystemMessageSettings) 
   }, []);
 
   const toggleVideo = useCallback(() => {
-    setIsVideoEnabled((prev) => {
+    setIsVideoEnabled((prev: boolean) => {
       const next = !prev;
       isVideoEnabledRef.current = next;
 
       if (streamRef.current) {
-        streamRef.current.getVideoTracks().forEach((track) => {
+        streamRef.current.getVideoTracks().forEach((track: MediaStreamTrack) => {
           track.enabled = next;
         });
       }
@@ -597,25 +633,25 @@ export function useGeminiLive(systemMessageSettings: LiveSystemMessageSettings) 
   }, [startVideoCapture, stopVideoCapture]);
 
   return {
-  isConnected,
-  isMuted,
-  cameraFacing,
-  isAudioPlaying,
-  micVolume,
-  isUserTalking,
-  transcript,
-  status,
-  sessionDurationMs,
-  videoRef,
-  canvasRef,
-  startConnection,
-  disconnect,
-  sendText,
-  toggleMute,
-  toggleVideo,
-  flipCamera,
-  isVideoEnabled,
-  consentTranscription,
-  setConsentTranscription,
+    isConnected,
+    isMuted,
+    cameraFacing,
+    isAudioPlaying,
+    micVolume,
+    isUserTalking,
+    transcript,
+    status,
+    sessionDurationMs,
+    videoRef,
+    canvasRef,
+    startConnection,
+    disconnect,
+    sendText,
+    toggleMute,
+    toggleVideo,
+    flipCamera,
+    isVideoEnabled,
+    consentTranscription,
+    setConsentTranscription,
   };
 }
