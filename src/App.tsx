@@ -89,23 +89,25 @@ export default function App() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="absolute bottom-12 left-1/2 -translate-x-1/2 z-20 pointer-events-auto flex flex-col items-center gap-4"
+                className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 pointer-events-auto flex items-center justify-center w-64 h-11 rounded-full bg-black/80 backdrop-blur-xl border border-white shadow-[0_0_20px_rgba(0,0,0,0.8),inset_0_0_10px_rgba(255,255,255,0.1)]"
               >
                 <button
                   type="button"
                   onClick={() => startConnection("Aoede")}
                   disabled={status === "connecting"}
                   className={cn(
-                    "relative flex items-center justify-center p-4 text-green-400",
+                    "relative flex items-center justify-center p-0 text-green-400",
                     "active:scale-95 transition-all duration-300 touch-manipulation",
                     status === "connecting" ? "opacity-50 cursor-not-allowed" : "hover:scale-110 hover:text-green-300"
                   )}
                   style={{ WebkitTapHighlightColor: 'transparent' }}
                 >
-                  <PhoneCallIcon
-                    ref={phoneIconRef}
-                    className="w-12 h-12 md:w-16 md:h-16"
-                  />
+                  <div className="flex items-center justify-center leading-none">
+                    <PhoneCallIcon
+                      ref={phoneIconRef}
+                      className="w-8 h-8 md:w-10 md:h-10 block"
+                    />
+                  </div>
                 </button>
               </motion.div>
             ) : (
@@ -114,28 +116,25 @@ export default function App() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="absolute inset-x-0 bottom-0 z-20 pointer-events-none"
-                style={{ paddingBottom: 'max(2rem, env(safe-area-inset-bottom))' }}
+                className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 pointer-events-auto flex items-center justify-center gap-8 w-64 h-11 rounded-full bg-black/80 backdrop-blur-xl border border-white shadow-[0_0_20px_rgba(0,0,0,0.8),inset_0_0_10px_rgba(255,255,255,0.1)]"
               >
-                <div className="flex items-center justify-center gap-8 pointer-events-auto">
-                  <button
-                    type="button"
-                    onClick={toggleMute}
-                    className="text-white/80 hover:text-white active:scale-90 transition-all touch-manipulation"
-                    style={{ WebkitTapHighlightColor: 'transparent' }}
-                  >
-                    {isMuted ? <MicOff size={26} className="text-red-400" /> : <Mic size={26} />}
-                  </button>
+                <button
+                  type="button"
+                  onClick={toggleMute}
+                  className="flex items-center justify-center text-white/80 hover:text-white active:scale-90 transition-all touch-manipulation"
+                  style={{ WebkitTapHighlightColor: 'transparent' }}
+                >
+                  {isMuted ? <MicOff size={22} className="text-red-400" /> : <Mic size={22} />}
+                </button>
 
-                  <button
-                    type="button"
-                    onClick={disconnect}
-                    className="active:scale-90 transition-all touch-manipulation"
-                    style={{ WebkitTapHighlightColor: 'transparent' }}
-                  >
-                    <PhoneOff size={32} className="text-red-500" />
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={disconnect}
+                  className="flex items-center justify-center active:scale-90 transition-all touch-manipulation"
+                  style={{ WebkitTapHighlightColor: 'transparent' }}
+                >
+                  <PhoneOff size={28} className="text-red-500" />
+                </button>
               </motion.div>
             )}
           </AnimatePresence>
