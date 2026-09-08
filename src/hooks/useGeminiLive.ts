@@ -2,11 +2,6 @@ import { useCallback, useRef, useState } from "react";
 import { GoogleGenAI, Modality, type LiveServerMessage } from "@google/genai";
 import { toast } from "sonner";
 
-import {
-  LIVE_FUNCTION_DECLARATIONS,
-  LIVE_FUNCTION_HANDLERS,
-} from "@/lib/liveTools";
-
 const INPUT_RATE = 16000;
 const OUTPUT_RATE = 24000;
 const OUTPUT_PREBUFFER_SAMPLES = 2400; // 100ms at 24k
@@ -15,8 +10,6 @@ const VIDEO_INTERVAL_MS = 500;
 type LiveSystemMessageSettings = {
   systemInstruction: string;
   model?: string;
-  enableGoogleSearch?: boolean;
-  enabledMcpTools?: string[];
   responseModality?: "AUDIO" | "TEXT";
 };
 
@@ -49,9 +42,7 @@ export function useGeminiLive(systemMessageSettings: LiveSystemMessageSettings) 
   const [isUserTalking, setIsUserTalking] = useState(false);
   const [status, setStatus] = useState<"idle" | "connecting" | "live" | "error">("idle");
   const [transcript, setTranscript] = useState<TranscriptItem[]>([]);
-  const [sessionDurationMs, setSessionDurationMs] = useState(0);
-  const [consentGoogleSearch, setConsentGoogleSearchState] = useState(false);
-  const [consentTranscription, setConsentTranscriptionState] = useState(false);
+  const [sessionDurationMs, setSessionDurationMs] = useState(0);  const [consentTranscription, setConsentTranscriptionState] = useState(false);
 
   const isMutedRef = useRef(false);
   const isVideoEnabledRef = useRef(true);
@@ -82,13 +73,7 @@ export function useGeminiLive(systemMessageSettings: LiveSystemMessageSettings) 
   const connectedAtRef = useRef<number | null>(null);
   const durationIntervalRef = useRef<number | null>(null);
   const resumptionHandleRef = useRef<string | null>(null);
-  const consentGoogleSearchRef = useRef(false);
   const consentTranscriptionRef = useRef(false);
-
-  const setConsentGoogleSearch = useCallback((value: boolean) => {
-    consentGoogleSearchRef.current = value;
-    setConsentGoogleSearchState(value);
-  }, []);
 
   const setConsentTranscription = useCallback((value: boolean) => {
     consentTranscriptionRef.current = value;
@@ -446,12 +431,6 @@ export function useGeminiLive(systemMessageSettings: LiveSystemMessageSettings) 
         await initAudio();
         await startStreaming();
 
-        const tools: any[] = [];
-
-        if (systemMessageSettings.enableGoogleSearch && consentGoogleSearchRef.current) {
-          tools.push({ googleSearch: {} });
-        }
-
         const tokenRes = await fetch("/api/session-token", { method: "POST" });
         const { token: ephemeralToken, error: tokenError } = await tokenRes.json();
         if (!ephemeralToken) throw new Error(tokenError || "Failed to get session token");
@@ -468,7 +447,6 @@ export function useGeminiLive(systemMessageSettings: LiveSystemMessageSettings) 
           config: {
             responseModalities: [Modality.AUDIO],
             systemInstruction: systemMessageSettings.systemInstruction,
-            tools: tools.length > 0 ? tools : undefined,
             speechConfig: {
               voiceConfig: {
                 prebuiltVoiceConfig: { voiceName: selectedVoice },
@@ -493,17 +471,6 @@ export function useGeminiLive(systemMessageSettings: LiveSystemMessageSettings) 
             onmessage: async (message: LiveServerMessage) => {
               if (message.serverContent?.interrupted) {
                 resetPlayback();
-              }
-
-              const toolCalls = (message as any)?.toolCall?.functionCalls ?? [];
-              if (toolCalls.length > 0 && sessionRef.current) {
-                const functionResponses = toolCalls.map((call: any) => ({
-                  id: call?.id as string,
-                  name: call?.name as string,
-                  response: { error: `Unknown function: ${call?.name}` },
-                }));
-
-                sessionRef.current.sendToolResponse({ functionResponses });
               }
 
               if ((message as any).sessionResumptionUpdate?.newHandle) {
@@ -630,27 +597,25 @@ export function useGeminiLive(systemMessageSettings: LiveSystemMessageSettings) 
   }, [startVideoCapture, stopVideoCapture]);
 
   return {
-    isConnected,
-    isMuted,
-    cameraFacing,
-    isAudioPlaying,
-    micVolume,
-    isUserTalking,
-    transcript,
-    status,
-    sessionDurationMs,
-    videoRef,
-    canvasRef,
-    startConnection,
-    disconnect,
-    sendText,
-    toggleMute,
-    toggleVideo,
-    flipCamera,
-    isVideoEnabled,
-    consentGoogleSearch,
-    consentTranscription,
-    setConsentGoogleSearch,
-    setConsentTranscription,
+  isConnected,
+  isMuted,
+  cameraFacing,
+  isAudioPlaying,
+  micVolume,
+  isUserTalking,
+  transcript,
+  status,
+  sessionDurationMs,
+  videoRef,
+  canvasRef,
+  startConnection,
+  disconnect,
+  sendText,
+  toggleMute,
+  toggleVideo,
+  flipCamera,
+  isVideoEnabled,
+  consentTranscription,
+  setConsentTranscription,
   };
 }
