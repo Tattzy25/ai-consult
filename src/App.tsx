@@ -8,10 +8,17 @@ import { ConnectingOverlay } from './components/ui/ConnectingOverlay';
 import { WreckShader } from './components/WreckShader';
 import { useGeminiLive } from './hooks/useGeminiLive';
 import { SYSTEM_MESSAGE_SETTINGS } from './lib/SystemMessage';
+import { LiveCommerce, type LiveCommerceHandle, type CommerceIntent } from '../commerce';
 
 export default function App() {
   const stageRef = useRef<HTMLDivElement>(null);
   const phoneIconRef = useRef<PhoneCallIconHandle>(null);
+  const commerceRef = useRef<LiveCommerceHandle>(null);
+
+  const handleCommerceIntent = (i: CommerceIntent) => {
+    // This would typically call the Gemini tool-caller
+    console.log('Commerce Intent:', i);
+  };
 
   const {
     isConnected,
@@ -80,6 +87,11 @@ export default function App() {
               onFlip={flipCamera}
             />
           </div>
+
+          <LiveCommerce
+            ref={commerceRef}
+            onIntent={handleCommerceIntent}
+          />
 
           {/* Phone button (pre-call) / Dock (in-call) */}
           <AnimatePresence mode="wait">

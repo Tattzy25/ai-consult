@@ -1,11 +1,12 @@
 import { useCallback, useRef, useState } from "react";
 import { GoogleGenAI, Modality, type LiveServerMessage } from "@google/genai";
 import { toast } from "sonner";
+
 import {
-  TATTOO_SHOP_TOOLS,
+  AGENT_SHOP_TOOLS,
   AGENT_PROFILE_URL,
   MCP_ENDPOINT,
-} from "../lib/gemini-tools";
+} from "../lib/GeminiTools";
 
 const INPUT_RATE = 16000;
 const OUTPUT_RATE = 24000;
@@ -531,7 +532,7 @@ export function useGeminiLive(
           config: {
             responseModalities: [Modality.AUDIO],
             systemInstruction: systemMessageSettings.systemInstruction,
-            tools: TATTOO_SHOP_TOOLS as any,
+            tools: AGENT_SHOP_TOOLS as any,
             speechConfig: {
               voiceConfig: {
                 prebuiltVoiceConfig: { voiceName: selectedVoice },
@@ -593,6 +594,8 @@ export function useGeminiLive(
                     const rawBody = await response.text();
                     const mcpPayload = parseMcpResponse(rawBody);
                     const toolData = unwrapMcpResult(mcpPayload);
+
+                    (window as any).LiveCommerce?.ingest(toolData);
 
                     onToolResult?.(toolData);
 
