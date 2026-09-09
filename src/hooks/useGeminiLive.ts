@@ -1,5 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { GoogleGenAI, Modality, type LiveServerMessage } from "@google/genai";
+import { callCartMcp, isCartTool } from "../lib/MCP/cartCall";
+import { callCatalogMcp } from "../lib/MCP/catalogCall";
 import { toast } from "sonner";
 
 import {
@@ -19,7 +21,7 @@ type LiveSystemMessageSettings = {
   responseModality?: "AUDIO" | "TEXT";
 };
 
-type TranscriptItem = { role: "user" | "tatty"; text: string };
+type TranscriptItem = { role: "user" | "agent"; text: string };
 
 type McpToolCallResult = {
   result?: {
@@ -565,34 +567,26 @@ export function useGeminiLive(
                 for (const call of calls) {
                   const { name, args, id } = call;
 
-                  try {
-                    const response = await fetch(MCP_ENDPOINT, {
-                      method: "POST",
-                      headers: {
-                        "Content-Type": "application/json",
-                        Accept: "application/json, text/event-stream",
-                        "MCP-Protocol-Version": "2025-11-25",
-                      },
-                      body: JSON.stringify({
-                        jsonrpc: "2.0",
-                        id,
-                        method: "tools/call",
-                        params: {
-                          name,
-                          arguments: {
-                            meta: {
-                              "ucp-agent": {
-                                profile: AGENT_PROFILE_URL,
-                              },
-                            },
-                            ...(args ?? {}),
-                          },
-                        },
-                      }),
-                    });
+                    if (isCartTool(name ?? "")) {
+                      const toolData = await callCartMcp(name as any, id ?? "", args);
 
-                    const rawBody = await response.text();
-                    const mcpPayload = parseMcpResponse(rawBody);
+                      (window as any).LiveCommerce?.ingest(toolData);
+                      onToolResult?.(toolData);
+
+                      sessionRef.current?.sendToolResponse({
+                        functionResponses: [
+                          {
+                            name,
+                            id,
+                            response: { result: toolData },
+                          },
+                        ],
+                      });
+
+                      continue;
+                    }
+
+                    const mcpPayload = await callCatalogMcp(name ?? "", id ?? "", args);
                     const toolData = unwrapMcpResult(mcpPayload);
 
                     (window as any).LiveCommerce?.ingest(toolData);
@@ -608,17 +602,6 @@ export function useGeminiLive(
                         },
                       ],
                     });
-                  } catch (error) {
-                    sessionRef.current?.sendToolResponse({
-                      functionResponses: [
-                        {
-                          name,
-                          id,
-                          response: { error: "Catalog unavailable" },
-                        },
-                      ],
-                    });
-                  }
                 }
 
                 return;
@@ -646,7 +629,7 @@ export function useGeminiLive(
                 if (outputTranscript) {
                   setTranscript((previous) => [
                     ...previous,
-                    { role: "tatty", text: outputTranscript },
+                    { role: "agent", text: outputTranscript },
                   ]);
                 }
               }
@@ -661,7 +644,7 @@ export function useGeminiLive(
                 if (part.text && consentTranscriptionRef.current) {
                   setTranscript((previous) => [
                     ...previous,
-                    { role: "tatty", text: part.text! },
+                    { role: "agent", text: part.text! },
                   ]);
                 }
               }
