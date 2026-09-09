@@ -2,39 +2,55 @@
  * commerce/LiveCommerce.tsx — the whole commerce surface, as ONE importable layer.
  *
  * Mount it anywhere inside the host (your App stage, next to the orb/dock):
- *     <LiveCommerce onIntent={i => runToolCall(i)} />
+ *     <LiveCommerce sessionActive={isConnected} onIntent={i => runToolCall(i)} />
  *
  * It owns RENDERING ONLY:
  *   · renders nothing until a tool result arrives (stage 'idle' = invisible)
+ *   · renders nothing when the session ends (sessionActive=false → full reset)
  *   · data in:  window.LiveCommerce.ingest(anyResult)  or ref.ingest(...)
- *   · intents out: onIntent(...) — the host/agent performs the actual commerce
+ *   · intents out: onIntent(...) — ONLY commerce actions by default; pure UI
+ *     navigation (taps, opens, closes) stays silent so the voice agent is
+ *     never interrupted. Opt in with emitNavigationIntents.
  *   · voice-readable mirror: window.LiveCommerceState + ref.snapshot()
  *
  * Fixed progression (the only fixed thing):
  *   discovery → detail → options → cartConfirm → cart → checkout → complete
+ *
+ * Mobile-first: shelf is a 1-row snap carousel on small screens (swipe, never
+ * auto-advances — pages only change by human hand), a 4-up grid from md up,
+ * and the container hugs however many products actually came back (1, 2, 3…).
+ * Everything can be minimized to a pill or cleared with an X at any time.
  */
 import React, {
   forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState,
 } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  ChevronLeft, ChevronRight, X, Minus, Plus, Trash2, ShoppingBag,
-  CheckCircle2, Loader2, Store, ExternalLink,
+  ChevronLeft, ChevronRight, ChevronDown, ChevronUp, X, Minus, Plus, Trash2,
+  ShoppingBag, CheckCircle2, Loader2, Store, ExternalLink,
 } from 'lucide-react';
 import type {
   Raw, Stage, View, Product, CartState, CheckoutState, OrderState,
   CommerceIntent, CommerceSnapshot, LiveCommerceHandle, RoutedResult,
 } from './types';
 import { routeResult } from './route';
-import { normalizeProduct } from './resolve';
+import { normalizeProduct, setPriceUnit } from './resolve';
 
 export const PER_PAGE = 4;
+const OPT_PREVIEW = 8;      // option chips shown before "Show all N"
+const VARIANT_PREVIEW = 6;
 
 export interface LiveCommerceProps {
   /** Intents flow out to the host here (map them to Gemini/tool calls). */
   onIntent?: (intent: CommerceIntent) => void;
-  /** Shelf auto-rotate ms, 0 disables. Same energy as the prototype. */
-  autoRotateMs?: number;
+  /** Tie the layer to the call: false (hung up) → everything clears. */
+  sessionActive?: boolean;
+  /** Also emit pure-UI navigation intents (select_product, close, …).
+   *  Default false — tapping around must not interrupt the voice agent. */
+  emitNavigationIntents?: boolean;
+  /** 'auto' (default): integer amounts are minor units (100 → $1.00).
+   *  Force 'minor' | 'major' if your platform always sends one kind. */
+  priceUnit?: 'auto' | 'minor' | 'major';
   className?: string;
 }
 
@@ -42,6 +58,8 @@ export interface LiveCommerceProps {
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(' ');
 const hash = (s: string) => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return Math.abs(h); };
 const initials = (s: string) => s.split(/\s+/).slice(0, 2).map(w => w[0] ?? '').join('').toUpperCase() || '•';
+
+const NO_SB = 'lc-no-sb';   // hidden scrollbars (injected once below)
 
 function Thumb({ p, className }: { p: Product; className?: string }) {
   const src = p.media[0];
@@ -76,25 +94,22 @@ const Badge = ({ text, tone }: { text: string; tone?: 'sale' | 'new' | 'stock' }
 const badgeTone = (p: Product): 'sale' | 'new' | 'stock' | undefined =>
   p.badge ? (/sale|deal|off/i.test(p.badge) ? 'sale' : /new/i.test(p.badge) ? 'new' : undefined) : undefined;
 
-const GlassPill = ({ children, className }: { children: React.ReactNode; className?: string }) => (
-  <div className={cx('rounded-full bg-black/80 backdrop-blur-xl border border-white shadow-[0_0_20px_rgba(0,0,0,0.8),inset_0_0_10px_rgba(255,255,255,0.1)]', className)}>{children}</div>
-);
-
 /* ═══════════════════════════════════════════════════════════════════════ */
 const LiveCommerce = forwardRef<LiveCommerceHandle, LiveCommerceProps>(function LiveCommerce(
-  { onIntent, autoRotateMs = 8000, className }, ref,
+  { onIntent, sessionActive = true, emitNavigationIntents = false, priceUnit = 'auto', className }, ref,
 ) {
   const [stage, setStage] = useState<Stage>('idle');
   const [products, setProducts] = useState<Product[]>([]);
   const [page, setPage] = useState(0);
+  const [minimized, setMinimized] = useState(false);
   const [active, setActive] = useState<Product | null>(null);
   const [selections, setSelections] = useState<Record<string, string>>({});
+  const [showAll, setShowAll] = useState<Record<string, boolean>>({});
   const [cart, setCart] = useState<CartState | null>(null);
   const [checkout, setCheckout] = useState<CheckoutState | null>(null);
   const [order, setOrder] = useState<OrderState | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [pendingAdd, setPendingAdd] = useState(false);
-  const [hover, setHover] = useState(false);
   const lastRaw = useRef<Raw>(null);
   const toastT = useRef<any>(null);
   const onIntentRef = useRef(onIntent);
@@ -102,15 +117,36 @@ const LiveCommerce = forwardRef<LiveCommerceHandle, LiveCommerceProps>(function 
 
   const pages = Math.max(1, Math.ceil(products.length / PER_PAGE));
   const emit = useCallback((i: CommerceIntent) => onIntentRef.current?.(i), []);
+  /** navigation intents stay silent unless the host explicitly opts in */
+  const nav = useCallback((i: CommerceIntent) => { if (emitNavigationIntents) onIntentRef.current?.(i); }, [emitNavigationIntents]);
   const say = useCallback((m: string) => {
     setToast(m); clearTimeout(toastT.current);
     toastT.current = setTimeout(() => setToast(null), 2400);
   }, []);
 
+  /* one-time global stylesheet: hidden scrollbars, no ugly variant scrollbar */
+  useEffect(() => {
+    if (document.getElementById('lc-style')) return;
+    const el = document.createElement('style');
+    el.id = 'lc-style';
+    el.textContent = `.${NO_SB}{scrollbar-width:none;-ms-overflow-style:none}.${NO_SB}::-webkit-scrollbar{display:none;width:0}`;
+    document.head.appendChild(el);
+  }, []);
+
+  useEffect(() => { setPriceUnit(priceUnit); }, [priceUnit]);
+
+  /* call ended → commerce clears itself (nothing left on screen after hangup) */
+  useEffect(() => {
+    if (!sessionActive) {
+      setStage('idle'); setProducts([]); setPage(0); setMinimized(false); setActive(null);
+      setSelections({}); setShowAll({}); setCart(null); setCheckout(null); setOrder(null);
+      setPendingAdd(false); lastRaw.current = null;
+    }
+  }, [sessionActive]);
+
   const backFrom = useCallback((s: Stage): Stage => {
     if (s === 'options') return 'detail';
     if (s === 'checkout') return cart ? 'cart' : 'discovery';
-    if (s === 'complete') return products.length ? 'discovery' : 'idle';
     return products.length ? 'discovery' : 'idle';
   }, [cart, products.length]);
 
@@ -120,11 +156,11 @@ const LiveCommerce = forwardRef<LiveCommerceHandle, LiveCommerceProps>(function 
     lastRaw.current = raw;
     switch (routed.view) {
       case 'discovery':
-        setProducts(routed.products); setPage(0); setStage('discovery');
+        setProducts(routed.products); setPage(0); setMinimized(false); setStage('discovery');
         break;
       case 'detail':
-        setActive(routed.product); setSelections({});
-        setStage(routed.product ? 'detail' : stage);
+        setActive(routed.product); setSelections({}); setShowAll({});
+        if (routed.product) setStage('detail');
         break;
       case 'cartConfirm':
         setCart(routed.cart); setPendingAdd(false); setStage('cartConfirm');
@@ -145,15 +181,16 @@ const LiveCommerce = forwardRef<LiveCommerceHandle, LiveCommerceProps>(function 
         break; // retained in lastRaw / snapshot; nothing rendered
     }
     return routed;
-  }, [say, stage]);
+  }, [say]);
 
   /* ── intents out (touch + voice share this path) ─────────────────────── */
   const act = useCallback((intent: CommerceIntent) => {
     switch (intent.type) {
       case 'select_product': {
         const p = normalizeProduct(intent.raw);
-        setActive(p); setSelections({}); setStage('detail');
-        break;
+        setActive(p); setSelections({}); setShowAll({}); setStage('detail');
+        nav(intent);
+        return;
       }
       case 'add_to_cart':
         setPendingAdd(true);
@@ -161,23 +198,31 @@ const LiveCommerce = forwardRef<LiveCommerceHandle, LiveCommerceProps>(function 
         break;
       case 'open_cart':
         if (cart) setStage('cart');
-        break;
+        nav(intent);
+        return;
       case 'continue_browsing':
         setStage(products.length ? 'discovery' : 'idle');
-        break;
+        nav(intent);
+        return;
       case 'close':
         setStage(backFrom(stage));
-        break;
+        nav(intent);
+        return;
       default:
         break; // update_qty / remove_line / refresh_cart / checkout / checkout_action: host-side
     }
-    emit(intent);
-  }, [cart, products.length, stage, backFrom, emit]);
+    emit(intent); // commerce intents only
+  }, [cart, products.length, stage, backFrom, emit, nav]);
 
   const reset = useCallback(() => {
-    setStage('idle'); setProducts([]); setPage(0); setActive(null); setSelections({});
-    setCart(null); setCheckout(null); setOrder(null); setPendingAdd(false);
-    lastRaw.current = null;
+    setStage('idle'); setProducts([]); setPage(0); setMinimized(false); setActive(null);
+    setSelections({}); setShowAll({}); setCart(null); setCheckout(null); setOrder(null);
+    setPendingAdd(false); lastRaw.current = null;
+  }, []);
+
+  const clearResults = useCallback(() => {
+    setProducts([]); setPage(0); setMinimized(false);
+    setStage('idle');
   }, []);
 
   const matchedVariant = useMemo(() => {
@@ -189,6 +234,7 @@ const LiveCommerce = forwardRef<LiveCommerceHandle, LiveCommerceProps>(function 
 
   const snapshot = useCallback((): CommerceSnapshot => ({
     stage,
+    minimized,
     resultCount: products.length,
     page: page + 1,
     pages,
@@ -203,7 +249,7 @@ const LiveCommerce = forwardRef<LiveCommerceHandle, LiveCommerceProps>(function 
     checkout: checkout ? { mode: checkout.mode, url: checkout.url } : null,
     order: order ? { id: order.id, message: order.message } : null,
     lastRaw: lastRaw.current,
-  }), [stage, products.length, page, pages, active, selections, matchedVariant, cart, checkout, order]);
+  }), [stage, minimized, products.length, page, pages, active, selections, matchedVariant, cart, checkout, order]);
 
   useImperativeHandle(ref, () => ({ ingest, act, snapshot, reset }), [ingest, act, snapshot, reset]);
 
@@ -215,65 +261,94 @@ const LiveCommerce = forwardRef<LiveCommerceHandle, LiveCommerceProps>(function 
   }, [ingest, act, snapshot, reset]);
   useEffect(() => { (window as any).LiveCommerceState = snapshot(); });
 
-  /* shelf auto-rotate (pauses on hover; only while shelf is the live stage) */
+  /* Esc = back/close whatever sheet is open (never traps the buyer) */
   useEffect(() => {
-    if (stage !== 'discovery' || autoRotateMs <= 0 || pages < 2 || hover) return;
-    const t = setInterval(() => setPage(p => (p + 1) % pages), autoRotateMs);
-    return () => clearInterval(t);
-  }, [stage, pages, hover, autoRotateMs]);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (stage === 'detail' || stage === 'options' || stage === 'cart' || stage === 'cartConfirm') {
+        act({ type: 'close' });
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [stage, act]);
 
   useEffect(() => { clearTimeout(toastT.current); }, []);
 
-  /* ── render ──────────────────────────────────────────────────────────── */
+  if (!sessionActive) return null; // hung up → the layer is gone, fully
+
+  /* ── render ─────────────────────────────────────────────────────────── */
   const slice = products.slice(page * PER_PAGE, page * PER_PAGE + PER_PAGE);
   const detailPrice = matchedVariant?.priceLabel ?? active?.priceLabel ?? null;
   const detailMedia = matchedVariant?.media[0] ?? active?.media[0] ?? null;
   const detailAvail = matchedVariant?.availability ?? active?.availability ?? null;
   const cartUnits = cart?.lines.reduce((n, l) => n + (l.qty ?? 1), 0) ?? 0;
 
-  const openDetail = (p: Product) => { setActive(p); setSelections({}); setStage('detail'); emit({ type: 'select_product', raw: p.raw }); };
+  const openDetail = (p: Product) => {
+    setActive(p); setSelections({}); setShowAll({}); setStage('detail');
+    nav({ type: 'select_product', raw: p.raw }); // silent by default
+  };
+
+  const card = (p: Product) => (
+    <button
+      key={p.id} type="button" onClick={() => openDetail(p)}
+      className="relative flex w-[58vw] max-w-[240px] shrink-0 snap-center flex-col gap-1 rounded-xl bg-zinc-50 p-1.5 text-left text-zinc-900 transition-transform hover:-translate-y-0.5 active:scale-[0.98] md:w-auto md:max-w-none md:shrink"
+    >
+      {p.badge && <Badge text={p.badge} tone={badgeTone(p)} />}
+      <span className="aspect-square w-full overflow-hidden rounded-lg bg-zinc-200"><Thumb p={p} /></span>
+      <span className="line-clamp-2 min-h-[2.5em] text-[11px] font-semibold leading-tight">{p.title}</span>
+      {p.seller
+        ? <span className="truncate text-[9.5px] text-zinc-500">{p.seller}</span>
+        : <span className="truncate text-[9.5px] text-zinc-400/70">&nbsp;</span>}
+      <Stars rating={p.rating} reviews={p.reviews} />
+      <span className="mt-auto flex items-baseline gap-1.5">
+        <span className="text-xs font-extrabold">{p.priceLabel ?? '—'}</span>
+        {p.compareLabel && <s className="text-[10px] text-zinc-400">{p.compareLabel}</s>}
+      </span>
+    </button>
+  );
 
   return (
     <div className={cx('pointer-events-none absolute inset-0 z-30 text-zinc-100', className)} data-stage={stage}>
 
-      {/* ── 1 · DISCOVERY SHELF — 4 at a time, exactly when results exist ── */}
+      {/* ── 1 · DISCOVERY — mobile: 1-row snap carousel · md+: 4-up grid ── */}
       <AnimatePresence>
-        {stage === 'discovery' && (
+        {stage === 'discovery' && !minimized && (
           <motion.div
             key="shelf" initial={{ y: 24, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 24, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 320, damping: 30 }}
-            className="pointer-events-auto absolute bottom-20 left-1/2 -translate-x-1/2 w-[min(92%,880px)] rounded-2xl border border-white/15 bg-black/80 backdrop-blur-xl p-2.5 shadow-[0_18px_50px_rgba(0,0,0,0.55)]"
-            onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+            className="pointer-events-auto absolute bottom-20 left-1/2 -translate-x-1/2 w-fit max-w-[min(94%,880px)] rounded-2xl border border-white/15 bg-black/80 p-2.5 shadow-[0_18px_50px_rgba(0,0,0,0.55)] backdrop-blur-xl"
           >
-            <div className="flex items-center justify-between px-1 pb-2">
+            <div className="flex items-center justify-between gap-3 px-1 pb-2">
               <span className="flex items-center gap-1.5 text-[10px] font-bold tracking-[0.18em] text-white/85">
-                <i className="w-[7px] h-[7px] rounded-full bg-red-500 animate-pulse" />RESULTS
+                <i className="h-[7px] w-[7px] animate-pulse rounded-full bg-red-500" />RESULTS
               </span>
-              <span className="text-[10.5px] tracking-[0.08em] text-white/55">
-                {products.length} items · page {page + 1}/{pages}
-              </span>
-            </div>
-
-            <div className="grid grid-cols-4 gap-2.5 max-md:grid-cols-2">
-              {slice.map(p => (
-                <button
-                  key={p.id} type="button" onClick={() => openDetail(p)}
-                  className="relative flex flex-col gap-1 rounded-xl bg-zinc-50 p-1.5 text-left text-zinc-900 transition-transform hover:-translate-y-0.5 active:scale-[0.98]"
-                >
-                  {p.badge && <Badge text={p.badge} tone={badgeTone(p)} />}
-                  <span className="aspect-square w-full overflow-hidden rounded-lg bg-zinc-200"><Thumb p={p} /></span>
-                  <span className="line-clamp-2 min-h-[2.5em] text-[11px] font-semibold leading-tight">{p.title}</span>
-                  {p.seller && <span className="truncate text-[9.5px] text-zinc-500">{p.seller}</span>}
-                  <Stars rating={p.rating} reviews={p.reviews} />
-                  <span className="mt-auto flex items-baseline gap-1.5">
-                    <span className="text-xs font-extrabold">{p.priceLabel ?? '—'}</span>
-                    {p.compareLabel && <s className="text-[10px] text-zinc-400">{p.compareLabel}</s>}
-                  </span>
+              <span className="flex items-center gap-2">
+                <span className="text-[10.5px] tracking-[0.08em] text-white/55">
+                  <span className="md:hidden">{products.length} items</span>
+                  <span className="hidden md:inline">{products.length} items · page {page + 1}/{pages}</span>
+                </span>
+                <button type="button" onClick={() => setMinimized(true)} aria-label="Minimize results"
+                  className="grid h-6 w-6 place-items-center rounded-full bg-white/10 text-white/80 hover:bg-white/20">
+                  <ChevronDown size={13} />
                 </button>
-              ))}
+                <button type="button" onClick={clearResults} aria-label="Clear results"
+                  className="grid h-6 w-6 place-items-center rounded-full bg-white/10 text-white/80 hover:bg-white/20">
+                  <X size={12} />
+                </button>
+              </span>
             </div>
 
-            <div className="flex items-center justify-center gap-3.5 pt-2">
+            {/* 1 row on phones (swipe), grid of exactly N columns on md+ so the
+                container hugs 1/2/3 products — no empty black slots, ever */}
+            <div
+              className={cx('flex snap-x snap-mandatory gap-2.5 overflow-x-auto pb-1 md:grid md:snap-none md:overflow-visible md:pb-0', NO_SB)}
+              style={{ gridTemplateColumns: `repeat(${slice.length}, minmax(0, 1fr))` }}
+            >
+              {slice.map(card)}
+            </div>
+
+            <div className="hidden items-center justify-center gap-3.5 pt-2 md:flex">
               <button type="button" disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}
                 className="grid h-6 w-6 place-items-center rounded-full bg-white/10 text-white/80 hover:bg-white/20 disabled:opacity-30" aria-label="Previous 4 products">
                 <ChevronLeft size={13} />
@@ -291,96 +366,138 @@ const LiveCommerce = forwardRef<LiveCommerceHandle, LiveCommerceProps>(function 
             </div>
           </motion.div>
         )}
+
+        {stage === 'discovery' && minimized && (
+          <motion.div key="shelf-pill" initial={{ y: 16, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 16, opacity: 0 }}
+            className="pointer-events-auto absolute bottom-20 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full border border-white/15 bg-black/85 py-2 pl-4 pr-2 backdrop-blur-xl">
+            <button type="button" onClick={() => setMinimized(false)}
+              className="flex items-center gap-1.5 text-[10px] font-bold tracking-[0.14em] text-white/85">
+              <ChevronUp size={13} />RESULTS · {products.length}
+            </button>
+            <button type="button" onClick={clearResults} aria-label="Clear results"
+              className="grid h-6 w-6 place-items-center rounded-full bg-white/10 text-white/80 hover:bg-white/20">
+              <X size={12} />
+            </button>
+          </motion.div>
+        )}
       </AnimatePresence>
 
       {/* ── 2/3 · PRODUCT DETAIL → OPTION/VARIANT SELECTION ──────────────── */}
       <AnimatePresence>
         {(stage === 'detail' || stage === 'options') && active && (
           <motion.div key="detail" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="pointer-events-auto absolute inset-0 grid place-items-center bg-black/60 backdrop-blur-md p-4">
+            className="pointer-events-auto absolute inset-0 grid place-items-center bg-black/60 p-4 backdrop-blur-md"
+            onClick={e => { if (e.target === e.currentTarget) act({ type: 'close' }); }}>
             <motion.div
               initial={{ scale: 0.92, y: 14 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0 }}
               transition={{ type: 'spring', stiffness: 300, damping: 28 }}
-              className="flex max-h-[88%] w-[min(94%,430px)] flex-col gap-3 overflow-y-auto rounded-3xl bg-zinc-50 p-4 text-zinc-900 shadow-2xl"
+              className="flex max-h-[88%] w-[min(94%,430px)] flex-col overflow-hidden rounded-3xl bg-zinc-50 text-zinc-900 shadow-2xl"
             >
-              <div className="flex items-center justify-between">
-                <button type="button" onClick={() => act({ type: 'close' })}
-                  className="grid h-8 w-8 place-items-center rounded-full bg-zinc-200 hover:bg-zinc-300" aria-label="Back">
+              {/* sticky header: close is always reachable, never scrolled away */}
+              <div className="flex items-center justify-between gap-2 border-b border-zinc-200 bg-zinc-50 px-3 py-2">
+                <button type="button" onClick={() => act({ type: 'close' })} aria-label={stage === 'options' ? 'Back to product' : 'Close product'}
+                  className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-zinc-200 hover:bg-zinc-300">
                   {stage === 'options' ? <ChevronLeft size={16} /> : <X size={16} />}
                 </button>
-                {active.seller && <span className="truncate text-[11px] font-semibold text-zinc-500">{active.seller}</span>}
+                <span className="truncate text-[11px] font-semibold text-zinc-500">{active.seller ?? ''}</span>
+                {stage === 'options' ? (
+                  <button type="button" onClick={() => setStage('detail')}
+                    className="shrink-0 rounded-full bg-zinc-200 px-3 py-1.5 text-[10px] font-bold text-zinc-600 hover:bg-zinc-300">Product</button>
+                ) : (active.options.length > 0 || active.variants.length > 0) ? (
+                  <button type="button" onClick={() => setStage('options')}
+                    className="shrink-0 rounded-full bg-zinc-900 px-3 py-1.5 text-[10px] font-bold text-white hover:bg-zinc-800">
+                    Options · {active.options.length || active.variants.length}
+                  </button>
+                ) : <span className="w-8" />}
               </div>
 
-              <div className="relative aspect-[4/3] w-full overflow-hidden rounded-2xl bg-zinc-200">
-                {active.badge && <Badge text={active.badge} tone={badgeTone(active)} />}
-                {detailMedia
-                  ? <img src={detailMedia} alt="" className="h-full w-full object-cover" />
-                  : <Thumb p={active} />}
-              </div>
-
-              <div>
-                <h2 className="text-base font-extrabold leading-snug">{active.title}</h2>
-                <div className="mt-1 flex items-center gap-2">
-                  <Stars rating={active.rating} reviews={active.reviews} />
-                  {detailAvail && <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[9.5px] font-bold text-zinc-600">{detailAvail}</span>}
+              <div className={cx('flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 pb-3 pt-3', NO_SB)}>
+                <div className="relative max-h-[36vh] w-full shrink-0 overflow-hidden rounded-2xl bg-zinc-200 md:max-h-none md:aspect-[4/3]">
+                  {active.badge && <Badge text={active.badge} tone={badgeTone(active)} />}
+                  {detailMedia
+                    ? <img src={detailMedia} alt="" className="h-full w-full object-cover" />
+                    : <Thumb p={active} />}
                 </div>
+
+                <div>
+                  <h2 className="text-base font-extrabold leading-snug">{active.title}</h2>
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                    <Stars rating={active.rating} reviews={active.reviews} />
+                    {detailAvail && <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[9.5px] font-bold text-zinc-600">{detailAvail}</span>}
+                    {active.deliveryLabel && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[9.5px] font-bold text-emerald-700">{active.deliveryLabel}</span>}
+                  </div>
+                </div>
+
+                {active.description && <p className="text-xs leading-relaxed text-zinc-600">{active.description}</p>}
+
+                {stage === 'options' && (
+                  <div className="flex flex-col gap-3">
+                    {active.options.map(g => {
+                      const open = !!showAll[g.id];
+                      const vals = open ? g.values : g.values.slice(0, OPT_PREVIEW);
+                      return (
+                        <div key={g.id}>
+                          <div className="mb-1.5 text-[10px] font-extrabold uppercase tracking-[0.12em] text-zinc-500">
+                            {g.label}{selections[g.label] ? `: ${selections[g.label]}` : ''}
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {vals.map(v => (
+                              <button key={v.label} type="button"
+                                disabled={v.available === false}
+                                onClick={() => setSelections(s => ({ ...s, [g.label]: v.label }))}
+                                className={cx(
+                                  'rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors',
+                                  selections[g.label] === v.label ? 'border-zinc-900 bg-zinc-900 text-white' : 'border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100',
+                                  v.available === false && 'opacity-40 line-through',
+                                )}>
+                                {v.label}{v.priceLabel ? ` · ${v.priceLabel}` : ''}
+                              </button>
+                            ))}
+                          </div>
+                          {g.values.length > OPT_PREVIEW && (
+                            <button type="button" onClick={() => setShowAll(s => ({ ...s, [g.id]: !open }))}
+                              className="mt-1.5 text-[10px] font-bold text-zinc-500 underline hover:text-zinc-800">
+                              {open ? 'Show fewer' : `Show all ${g.values.length} ${g.label.toLowerCase()}s`}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {active.variants.length > 0 && (() => {
+                      const open = !!showAll.__variants;
+                      const list = open ? active.variants : active.variants.slice(0, VARIANT_PREVIEW);
+                      return (
+                        <div className="flex flex-col gap-1.5">
+                          <div className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-zinc-500">Variants</div>
+                          {list.map(v => (
+                            <button key={v.id} type="button"
+                              onClick={() => setSelections(v.options)}
+                              className={cx(
+                                'flex items-center justify-between rounded-xl border px-3 py-2 text-left text-xs',
+                                matchedVariant?.id === v.id ? 'border-zinc-900 bg-zinc-900 text-white' : 'border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100',
+                              )}>
+                              <span className="font-semibold">{v.label}</span>
+                              <span className="flex items-center gap-2">
+                                {v.availability && <span className="opacity-70">{v.availability}</span>}
+                                <span className="font-extrabold">{v.priceLabel ?? ''}</span>
+                              </span>
+                            </button>
+                          ))}
+                          {active.variants.length > VARIANT_PREVIEW && (
+                            <button type="button" onClick={() => setShowAll(s => ({ ...s, __variants: !open }))}
+                              className="mt-0.5 text-[10px] font-bold text-zinc-500 underline hover:text-zinc-800">
+                              {open ? 'Show fewer' : `Show all ${active.variants.length} variants`}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
               </div>
 
-              {active.description && <p className="text-xs leading-relaxed text-zinc-600">{active.description}</p>}
-
-              {/* options / variants — arbitrary merchant labels */}
-              {(active.options.length > 0 || active.variants.length > 0) && stage === 'detail' && (
-                <button type="button" onClick={() => setStage('options')}
-                  className="rounded-xl border border-zinc-300 bg-white py-2.5 text-xs font-bold text-zinc-700 hover:bg-zinc-100">
-                  Options & variants{active.options.length ? ` · ${active.options.map(g => g.label).join(', ')}` : ''}
-                </button>
-              )}
-              {stage === 'options' && (
-                <div className="flex flex-col gap-3">
-                  {active.options.map(g => (
-                    <div key={g.id}>
-                      <div className="mb-1.5 text-[10px] font-extrabold uppercase tracking-[0.12em] text-zinc-500">
-                        {g.label}{selections[g.label] ? `: ${selections[g.label]}` : ''}
-                      </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {g.values.map(v => (
-                          <button key={v.label} type="button"
-                            disabled={v.available === false}
-                            onClick={() => setSelections(s => ({ ...s, [g.label]: v.label }))}
-                            className={cx(
-                              'rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors',
-                              selections[g.label] === v.label ? 'border-zinc-900 bg-zinc-900 text-white' : 'border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100',
-                              v.available === false && 'opacity-40 line-through',
-                            )}>
-                            {v.label}{v.priceLabel ? ` · ${v.priceLabel}` : ''}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                  {active.variants.length > 0 && (
-                    <div className="flex flex-col gap-1.5">
-                      <div className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-zinc-500">Variants</div>
-                      {active.variants.map(v => (
-                        <button key={v.id} type="button"
-                          onClick={() => { setSelections(v.options); }}
-                          className={cx(
-                            'flex items-center justify-between rounded-xl border px-3 py-2 text-left text-xs',
-                            matchedVariant?.id === v.id ? 'border-zinc-900 bg-zinc-900 text-white' : 'border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100',
-                          )}>
-                          <span className="font-semibold">{v.label}</span>
-                          <span className="flex items-center gap-2">
-                            {v.availability && <span className="opacity-70">{v.availability}</span>}
-                            <span className="font-extrabold">{v.priceLabel ?? ''}</span>
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div className="mt-auto flex items-center justify-between gap-3 pt-1">
+              {/* sticky footer: price + add never scroll away */}
+              <div className="flex items-center justify-between gap-3 border-t border-zinc-200 bg-zinc-50 px-4 py-3">
                 <span className="text-lg font-black">{detailPrice ?? '—'}</span>
                 <button type="button" disabled={pendingAdd}
                   onClick={() => act({ type: 'add_to_cart', raw: active.raw, variantRaw: matchedVariant?.raw ?? null, selectedOptions: selections })}
@@ -398,7 +515,7 @@ const LiveCommerce = forwardRef<LiveCommerceHandle, LiveCommerceProps>(function 
       <AnimatePresence>
         {stage === 'cartConfirm' && cart && (
           <motion.div key="confirm" initial={{ y: 24, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 24, opacity: 0 }}
-            className="pointer-events-auto absolute bottom-20 left-1/2 -translate-x-1/2 w-[min(92%,440px)] rounded-2xl border border-white/15 bg-black/85 p-3 backdrop-blur-xl shadow-[0_18px_50px_rgba(0,0,0,0.55)]">
+            className="pointer-events-auto absolute bottom-20 left-1/2 w-[min(92%,440px)] -translate-x-1/2 rounded-2xl border border-white/15 bg-black/85 p-3 shadow-[0_18px_50px_rgba(0,0,0,0.55)] backdrop-blur-xl">
             <div className="flex items-center gap-3">
               <CheckCircle2 size={22} className="shrink-0 text-emerald-400" />
               <div className="min-w-0 flex-1">
@@ -407,7 +524,8 @@ const LiveCommerce = forwardRef<LiveCommerceHandle, LiveCommerceProps>(function 
                   {[cart.lines[0]?.optionsLabel, cart.lines[0]?.qty != null ? `Qty ${cart.lines[0].qty}` : null, cart.lines[0]?.priceLabel].filter(Boolean).join(' · ') || (cart.messages[0] ?? '')}
                 </div>
               </div>
-              <button type="button" onClick={() => act({ type: 'close' })} className="grid h-7 w-7 place-items-center rounded-full bg-white/10 hover:bg-white/20" aria-label="Dismiss">
+              <button type="button" onClick={() => act({ type: 'close' })} aria-label="Dismiss"
+                className="grid h-7 w-7 place-items-center rounded-full bg-white/10 hover:bg-white/20">
                 <X size={14} />
               </button>
             </div>
@@ -437,17 +555,19 @@ const LiveCommerce = forwardRef<LiveCommerceHandle, LiveCommerceProps>(function 
       <AnimatePresence>
         {stage === 'cart' && cart && (
           <motion.div key="cart" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="pointer-events-auto absolute inset-0 grid place-items-center bg-black/60 backdrop-blur-md p-4">
+            className="pointer-events-auto absolute inset-0 grid place-items-center bg-black/60 p-4 backdrop-blur-md"
+            onClick={e => { if (e.target === e.currentTarget) act({ type: 'close' }); }}>
             <motion.div initial={{ scale: 0.94, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.96, opacity: 0 }}
-              className="flex max-h-[86%] w-[min(94%,520px)] flex-col gap-3 overflow-y-auto rounded-3xl border border-white/15 bg-zinc-950/95 p-4 backdrop-blur-xl">
+              className="flex max-h-[86%] w-[min(94%,520px)] flex-col gap-3 overflow-hidden rounded-3xl border border-white/15 bg-zinc-950/95 p-4 backdrop-blur-xl">
               <div className="flex items-center justify-between">
                 <h2 className="text-sm font-extrabold tracking-[0.06em]">YOUR BAG · {cartUnits} unit{cartUnits === 1 ? '' : 's'}</h2>
-                <button type="button" onClick={() => act({ type: 'close' })} className="grid h-8 w-8 place-items-center rounded-full bg-white/10 hover:bg-white/20" aria-label="Close cart">
+                <button type="button" onClick={() => act({ type: 'close' })} aria-label="Close cart"
+                  className="grid h-8 w-8 place-items-center rounded-full bg-white/10 hover:bg-white/20">
                   <X size={15} />
                 </button>
               </div>
 
-              <div className="flex flex-col gap-2">
+              <div className={cx('flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto', NO_SB)}>
                 {cart.lines.length === 0 && <div className="py-6 text-center text-xs text-white/50">Cart is empty.</div>}
                 {cart.lines.map(l => (
                   <div key={l.id} className="flex items-center gap-3 rounded-2xl bg-white/5 p-2">
@@ -470,35 +590,35 @@ const LiveCommerce = forwardRef<LiveCommerceHandle, LiveCommerceProps>(function 
                     </span>
                   </div>
                 ))}
-              </div>
 
-              {cart.messages.map((m, i) => <div key={i} className="text-[11px] text-amber-300">{m}</div>)}
+                {cart.messages.map((m, i) => <div key={i} className="text-[11px] text-amber-300">{m}</div>)}
 
-              {cart.totals.length > 0 && (
-                <div className="flex flex-col gap-1 border-t border-white/10 pt-2">
-                  {cart.totals.map(t => (
-                    <div key={t.label} className="flex justify-between text-xs text-white/70">
-                      <span>{t.label}</span><b className="text-white">{t.display}</b>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {cart.recommendations.length > 0 && (
-                <div>
-                  <div className="mb-1.5 text-[10px] font-extrabold uppercase tracking-[0.12em] text-white/50">You may also like</div>
-                  <div className="flex gap-2 overflow-x-auto pb-1">
-                    {cart.recommendations.slice(0, 4).map(p => (
-                      <button key={p.id} type="button" onClick={() => openDetail(p)}
-                        className="w-24 shrink-0 rounded-xl bg-zinc-50 p-1 text-left text-zinc-900 hover:-translate-y-0.5 transition-transform">
-                        <span className="block aspect-square overflow-hidden rounded-lg bg-zinc-200"><Thumb p={p} /></span>
-                        <span className="mt-1 line-clamp-1 text-[9.5px] font-semibold">{p.title}</span>
-                        <span className="block text-[9.5px] font-extrabold">{p.priceLabel ?? '—'}</span>
-                      </button>
+                {cart.totals.length > 0 && (
+                  <div className="flex flex-col gap-1 border-t border-white/10 pt-2">
+                    {cart.totals.map(t => (
+                      <div key={t.label} className="flex justify-between text-xs text-white/70">
+                        <span>{t.label}</span><b className="text-white">{t.display}</b>
+                      </div>
                     ))}
                   </div>
-                </div>
-              )}
+                )}
+
+                {cart.recommendations.length > 0 && (
+                  <div>
+                    <div className="mb-1.5 text-[10px] font-extrabold uppercase tracking-[0.12em] text-white/50">You may also like</div>
+                    <div className={cx('flex gap-2 overflow-x-auto pb-1', NO_SB)}>
+                      {cart.recommendations.slice(0, 4).map(p => (
+                        <button key={p.id} type="button" onClick={() => openDetail(p)}
+                          className="w-24 shrink-0 rounded-xl bg-zinc-50 p-1 text-left text-zinc-900 hover:-translate-y-0.5 transition-transform">
+                          <span className="block aspect-square overflow-hidden rounded-lg bg-zinc-200"><Thumb p={p} /></span>
+                          <span className="mt-1 line-clamp-1 text-[9.5px] font-semibold">{p.title}</span>
+                          <span className="block text-[9.5px] font-extrabold">{p.priceLabel ?? '—'}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
 
               <div className="flex gap-2 pt-1">
                 <button type="button" onClick={() => act({ type: 'continue_browsing' })}
@@ -515,7 +635,7 @@ const LiveCommerce = forwardRef<LiveCommerceHandle, LiveCommerceProps>(function 
       <AnimatePresence>
         {stage === 'checkout' && checkout && (
           <motion.div key="checkout" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="pointer-events-auto absolute inset-0 grid place-items-center bg-black/70 backdrop-blur-md p-4">
+            className="pointer-events-auto absolute inset-0 grid place-items-center bg-black/70 p-4 backdrop-blur-md">
             <motion.div initial={{ scale: 0.95, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.97, opacity: 0 }}
               className="flex max-h-[88%] w-[min(96%,760px)] flex-col overflow-hidden rounded-3xl border border-white/15 bg-zinc-50 text-zinc-900 shadow-2xl">
               <div className="flex items-center gap-3 bg-zinc-950 px-4 py-3 text-white">
@@ -524,7 +644,8 @@ const LiveCommerce = forwardRef<LiveCommerceHandle, LiveCommerceProps>(function 
                 {checkout.progress.map(s => (
                   <span key={s} className="rounded-full bg-white/10 px-2 py-0.5 text-[9.5px] font-bold">{s}</span>
                 ))}
-                <button type="button" onClick={() => act({ type: 'close' })} className="grid h-7 w-7 place-items-center rounded-full bg-white/10 hover:bg-white/20" aria-label="Back to cart">
+                <button type="button" onClick={() => act({ type: 'close' })} aria-label="Back to cart"
+                  className="grid h-7 w-7 place-items-center rounded-full bg-white/10 hover:bg-white/20">
                   <X size={14} />
                 </button>
               </div>
@@ -569,9 +690,9 @@ const LiveCommerce = forwardRef<LiveCommerceHandle, LiveCommerceProps>(function 
       <AnimatePresence>
         {stage === 'complete' && order && (
           <motion.div key="complete" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="pointer-events-auto absolute inset-0 grid place-items-center bg-black/70 backdrop-blur-md p-4">
+            className="pointer-events-auto absolute inset-0 grid place-items-center bg-black/70 p-4 backdrop-blur-md">
             <motion.div initial={{ scale: 0.92 }} animate={{ scale: 1 }} exit={{ scale: 0.96, opacity: 0 }}
-              className="flex w-[min(92%,400px)] flex-col items-center gap-3 rounded-3xl bg-zinc-50 p-6 text-center text-zinc-900 shadow-2xl">
+              className={cx('flex w-[min(92%,400px)] flex-col items-center gap-3 overflow-y-auto rounded-3xl bg-zinc-50 p-6 text-center text-zinc-900 shadow-2xl max-h-[86%]', NO_SB)}>
               <CheckCircle2 size={44} className="text-emerald-500" />
               <h2 className="text-lg font-black">Order complete</h2>
               {order.id && <div className="rounded-full bg-zinc-200 px-3 py-1 font-mono text-[11px] font-bold text-zinc-700">{order.id}</div>}
@@ -599,7 +720,7 @@ const LiveCommerce = forwardRef<LiveCommerceHandle, LiveCommerceProps>(function 
         {cart && cart.lines.length > 0 && !['cart', 'checkout', 'complete'].includes(stage) && (
           <motion.button key="bag" type="button" initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0, opacity: 0 }}
             onClick={() => { act({ type: 'open_cart' }); emit({ type: 'refresh_cart' }); }}
-            className="pointer-events-auto absolute bottom-4 right-4 grid h-11 w-11 place-items-center rounded-full bg-black/80 backdrop-blur-xl border border-white shadow-[0_0_20px_rgba(0,0,0,0.8)]"
+            className="pointer-events-auto absolute bottom-4 right-4 grid h-11 w-11 place-items-center rounded-full border border-white bg-black/80 shadow-[0_0_20px_rgba(0,0,0,0.8)] backdrop-blur-xl"
             aria-label="Open cart">
             <ShoppingBag size={19} />
             <span className="absolute -right-1 -top-1 grid h-[17px] min-w-[17px] place-items-center rounded-full bg-red-500 px-1 text-[10px] font-extrabold text-white">{cartUnits}</span>

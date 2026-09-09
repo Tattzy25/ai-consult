@@ -55,6 +55,7 @@ export interface Product {
   reviews: number | null;
   badge: string | null;
   availability: string | null;
+  deliveryLabel: string | null;   // digital/fulfillment hint, only when returned
   url: string | null;
   options: OptionGroup[];
   variants: Variant[];
@@ -137,6 +138,7 @@ export type CommerceIntent =
 /** Voice-agent-readable mirror of what is on screen right now. */
 export interface CommerceSnapshot {
   stage: Stage;
+  minimized: boolean;
   resultCount: number;
   page: number;
   pages: number;

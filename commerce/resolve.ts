@@ -117,43 +117,110 @@ export const resolveUrl = (o: Raw): string | null => {
 export const resolveTitle = (o: Raw): string =>
   asString(pick(o, ['title', 'name', 'product_name', 'productName', 'heading', 'display_name', 'displayName', 'item_name', 'label'])) ?? 'Untitled item';
 
-export const resolveSeller = (o: Raw): string | null =>
-  asString(pick(o, ['seller', 'seller_name', 'sellerName', 'merchant', 'merchant_name', 'merchantName', 'store', 'store_name', 'storeName', 'storefront', 'domain', 'brand', 'shop', 'shop_name', 'vendor', 'store_domain']));
+export const resolveSeller = (o: Raw): string | null => {
+  const v = pick(o, ['seller', 'seller_name', 'sellerName', 'merchant', 'merchant_name', 'merchantName', 'merchant_display_name', 'store', 'store_name', 'storeName', 'storefront', 'storefront_name', 'domain', 'brand', 'shop', 'shop_name', 'shop_title', 'shopify_store', 'vendor', 'store_domain', 'sold_by', 'soldBy', 'site', 'site_name']);
+  if (isObj(v)) {
+    return asString(pickShallow(v, ['name', 'display_name', 'displayName', 'title', 'store_name', 'shop_name']))
+      ?? asString(pickShallow(v, ['domain', 'url', 'hostname']));
+  }
+  return asString(v);
+};
 
-/* ── price (render returned values only) ────────────────────────────────── */
+/* ── price (render returned values only) ──────────────────────────────────
+   Minor-unit handling: many platforms return integer minor units (100 = $1.00,
+   26999 = $269.99). Resolution order:
+     1 · merchant display string (never touched)
+     2 · explicit unit hint on the object (unit/scale/minor_units/in_cents/…
+         or a key named *_cents / *_minor)
+     3 · host override via setPriceUnit('minor' | 'major')
+     4 · auto: INTEGER value ⇒ minor units (÷100); fractional ⇒ major
+   This is presentation of returned amounts, not commerce math.            */
+let PRICE_UNIT: 'auto' | 'minor' | 'major' = 'auto';
+export const setPriceUnit = (m: 'auto' | 'minor' | 'major') => { PRICE_UNIT = m; };
+export const getPriceUnit = () => PRICE_UNIT;
+
+const UNIT_HINT_KEYS = ['price_unit', 'priceUnit', 'unit', 'amount_unit', 'amountUnit', 'scale', 'minor_units', 'minorUnits', 'in_cents', 'inCents'];
+function unitMode(o: Raw, v: Raw): 'minor' | 'major' | null {
+  if (isObj(o)) {
+    const h = pickShallow(o, UNIT_HINT_KEYS);
+    if (h != null) {
+      const s = String(h).toLowerCase();
+      if (/cent|minor|subunit|^2$/.test(s)) return 'minor';
+      if (/major|whole|dollar|unit|^0$|^1$/.test(s)) return 'major';
+    }
+  }
+  if (PRICE_UNIT !== 'auto') return PRICE_UNIT;
+  // auto: integers are minor units, anything with a fraction is major
+  if (typeof v === 'number') return Number.isInteger(v) ? 'minor' : 'major';
+  if (typeof v === 'string') return /^\s*-?\d+\s*$/.test(v) ? 'minor' : 'major';
+  return null;
+}
+function priceFrom(v: Raw, o: Raw): string | null {
+  if (v == null) return null;
+  const display = isObj(v) ? asString(pickShallow(v, ['display', 'formatted', 'formatted_amount', 'price_display', 'text'])) : null;
+  if (display) return display;
+  let src = v; let cur: Raw = o;
+  if (isObj(v)) { src = pickShallow(v, ['amount', 'value', 'price', 'number']); cur = v; }
+  const n = asNumber(src);
+  if (n == null) return null;
+  const mode = unitMode(o, src);
+  return money(mode === 'minor' ? n / 100 : n, cur);
+}
 export function resolvePriceLabel(o: Raw): string | null {
   const display = asString(pick(o, ['price_display', 'priceDisplay', 'formatted_price', 'formattedPrice', 'display_price', 'price_string', 'price_text', 'price_formatted']));
   if (display) return display;
+  // explicit minor-unit key names win over everything else
+  if (isObj(o)) {
+    const centKey = Object.keys(o).find(k => /(_|^)(cents?|minor)(_?$)/i.test(k));
+    if (centKey) {
+      const n = asNumber(o[centKey]);
+      if (n != null) return money(n / 100, o);
+    }
+  }
   const pv = pick(o, ['price', 'current_price', 'currentPrice', 'sale_price', 'salePrice', 'unit_price', 'price_amount', 'best_price', 'amount']);
-  let n = asNumber(pv);
-  let cur: Raw = o;
-  if (n == null && isObj(pv)) { n = asNumber(pickShallow(pv, ['amount', 'value', 'price', 'number'])); cur = pv; }
-  if (n != null) return money(n, cur);
-  const min = asNumber(pick(o, ['min_price', 'price_min', 'from_price', 'starting_price', 'start_price']));
-  if (min != null) return `From ${money(min, o)}`;   // label on a returned min price
+  if (pv !== undefined) {
+    const s = priceFrom(pv, o);
+    if (s) return s;
+  }
+  const min = pick(o, ['min_price', 'price_min', 'from_price', 'starting_price', 'start_price']);
+  if (min !== undefined) {
+    const s = priceFrom(min, o);
+    if (s) return `From ${s}`;   // label on a returned min price
+  }
   const range = pick(o, ['price_range', 'priceRange']);
   if (isObj(range)) {
-    const lo = asNumber(pickShallow(range, ['min', 'low', 'from', 'min_price']));
-    if (lo != null) return `From ${money(lo, range)}`;
+    const lo = pickShallow(range, ['min', 'low', 'from', 'min_price']);
+    const s = priceFrom(lo, range);
+    if (s) return `From ${s}`;
   }
   return null;
 }
 export function resolveCompareLabel(o: Raw): string | null {
   const display = asString(pick(o, ['compare_at_display', 'compareAtDisplay', 'was_price_display'], false));
   if (display) return display;
-  const n = asNumber(pick(o, ['compare_at', 'compareAt', 'compare_at_price', 'original_price', 'originalPrice', 'list_price', 'listPrice', 'was_price', 'msrp', 'strike_price']));
-  return money(n, o);
+  const v = pick(o, ['compare_at', 'compareAt', 'compare_at_price', 'original_price', 'originalPrice', 'list_price', 'listPrice', 'was_price', 'msrp', 'strike_price']);
+  return v === undefined ? null : priceFrom(v, o);
 }
 
 /* ── rating / badge / availability / description ────────────────────────── */
 export function resolveRating(o: Raw): number | null {
-  let n = asNumber(pick(o, ['rating', 'ratings', 'average_rating', 'averageRating', 'avg_rating', 'stars', 'review_rating', 'score']));
+  let v = pick(o, ['rating', 'ratings', 'average_rating', 'averageRating', 'avg_rating', 'stars', 'review_rating', 'rating_average', 'overall_rating', 'overallRating', 'product_rating', 'score']);
+  if (isObj(v)) v = pickShallow(v, ['average', 'avg', 'value', 'rating', 'score', 'mean']);
+  let n = asNumber(v);
   if (n == null) return null;
   if (n > 5) n = n > 50 ? n / 20 : n / 10;
   return Math.round(Math.min(5, Math.max(0, n)) * 10) / 10;
 }
-export const resolveReviews = (o: Raw): number | null =>
-  asNumber(pick(o, ['reviews', 'review_count', 'reviewCount', 'reviews_count', 'rating_count', 'ratings_count', 'num_reviews']));
+export const resolveReviews = (o: Raw): number | null => {
+  let v = pick(o, ['reviews', 'review_count', 'reviewCount', 'reviews_count', 'rating_count', 'ratings_count', 'ratingsCount', 'num_reviews', 'total_reviews']);
+  if (v === undefined) {
+    // rating often arrives as { average, count } — take the count from there
+    const rObj = pickShallow(o, ['rating', 'ratings', 'average_rating', 'averageRating', 'overall_rating', 'overallRating', 'product_rating']);
+    if (isObj(rObj)) v = pickShallow(rObj, ['count', 'total', 'number', 'quantity', 'reviews_count']);
+  }
+  if (isObj(v)) v = pickShallow(v, ['count', 'total', 'number', 'quantity', 'reviews_count']);
+  return asNumber(v);
+};
 
 export const resolveBadge = (o: Raw): string | null => {
   const v = pick(o, ['badge', 'badges', 'tag', 'tags', 'promotion', 'promo_label']);
@@ -170,6 +237,12 @@ export const resolveDescription = (o: Raw): string | null => {
   const v = pick(o, ['description', 'desc', 'summary', 'blurb', 'product_description', 'long_description', 'short_description', 'details']);
   const list = asStrings(v);
   return list.length ? list.join(' ') : null;
+};
+/** digital goods / fulfillment hint, rendered as a chip when returned */
+export const resolveDelivery = (o: Raw): string | null => {
+  const v = pick(o, ['delivery', 'delivery_method', 'deliveryMethod', 'fulfillment', 'fulfillment_type', 'download', 'downloadable', 'digital', 'license_type', 'format']);
+  if (typeof v === 'boolean') return v ? 'Downloadable' : null;
+  return asString(v);
 };
 
 /* ── options / variants (arbitrary merchant labels) ─────────────────────── */
@@ -252,6 +325,7 @@ export function normalizeProduct(raw: Raw, i = 0): Product {
     reviews: resolveReviews(o),
     badge: resolveBadge(o),
     availability: resolveAvailability(o),
+    deliveryLabel: resolveDelivery(o),
     url: resolveUrl(o),
     options: resolveOptions(o),
     variants: resolveVariants(o),
@@ -290,7 +364,7 @@ function resolveTotals(raw: Raw): LabelValue[] {
     if (!isObj(t)) return { label: 'Total', display: String(t), raw: t };
     const label = asString(pickShallow(t, ['label', 'type', 'name', 'title', 'description'])) ?? (i === arr.length - 1 ? 'Total' : `Total ${i + 1}`);
     const display = asString(pickShallow(t, ['display', 'display_amount', 'formatted', 'formatted_amount', 'price_display', 'text']))
-      ?? money(asNumber(pickShallow(t, ['amount', 'value', 'price', 'total'])), t)
+      ?? priceFrom(pickShallow(t, ['amount', 'value', 'price', 'total']), t)
       ?? asString(pickShallow(t, ['amount', 'value']));
     return { label, display: display ?? '—', raw: t };
   });
