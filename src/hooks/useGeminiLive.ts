@@ -10,7 +10,7 @@ import {
   AGENT_PROFILE_URL,
   MCP_ENDPOINT,
 } from "../lib/GeminiTools";
-import { FAQ_AND_POLICIES_TOOLS } from "../lib/GeminiTools/faq.tools";
+import { FAQ_TOOLS } from "../lib/GeminiTools/faq.tools";
 
 const INPUT_RATE = 16000;
 const OUTPUT_RATE = 24000;
@@ -539,7 +539,7 @@ export function useGeminiLive(
 
             tools: [
               ...AGENT_SHOP_TOOLS,
-              ...FAQ_AND_POLICIES_TOOLS,
+              ...FAQ_TOOLS,
             ] as any,
 
             speechConfig: {

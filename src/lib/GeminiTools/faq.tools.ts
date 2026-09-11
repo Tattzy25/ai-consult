@@ -1,4 +1,4 @@
-export const FAQ_AND_POLICIES_TOOLS = [
+export const FAQ_TOOLS = [
   {
     functionDeclarations: [
       {
