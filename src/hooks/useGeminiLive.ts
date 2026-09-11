@@ -3,6 +3,7 @@ import { GoogleGenAI, Modality, type LiveServerMessage } from "@google/genai";
 import { callCartMcp, isCartTool } from "../lib/MCP/cartCall";
 import { callCatalogMcp } from "../lib/MCP/catalogCall";
 import { callFaqMcp } from "../lib/MCP/faqCall";
+import { callImageMcp } from "../lib/MCP/imageCall";
 import { toast } from "sonner";
 
 import {
@@ -14,7 +15,7 @@ import {
 const INPUT_RATE = 16000;
 const OUTPUT_RATE = 24000;
 const OUTPUT_PREBUFFER_SAMPLES = 2400;
-const VIDEO_INTERVAL_MS = 500;
+const VIDEO_INTERVAL_MS = 100;
 
 type LiveSystemMessageSettings = {
   systemInstruction: string;
@@ -601,6 +602,25 @@ export function useGeminiLive(
                     const toolData = unwrapMcpResult(parseMcpResponse(faqRawBody));
 
                     (window as any).LiveCommerce?.ingest(toolData);
+                    onToolResult?.(toolData);
+
+                    sessionRef.current?.sendToolResponse({
+                      functionResponses: [
+                        {
+                          name,
+                          id,
+                          response: { result: toolData },
+                        },
+                      ],
+                    });
+
+                    continue;
+                  }
+
+                  if (name === "generate_image" || name === "edit_image") {
+                    const imageRawBody = await callImageMcp(name, id ?? "", args);
+                    const toolData = unwrapMcpResult(parseMcpResponse(imageRawBody));
+
                     onToolResult?.(toolData);
 
                     sessionRef.current?.sendToolResponse({

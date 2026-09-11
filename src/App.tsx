@@ -143,15 +143,6 @@ export default function App() {
               >
                 <button
                   type="button"
-                  onClick={toggleMute}
-                  className="flex items-center justify-center text-white/80 hover:text-white active:scale-90 transition-all touch-manipulation"
-                  style={{ WebkitTapHighlightColor: 'transparent' }}
-                >
-                  {isMuted ? <MicOff size={22} className="text-red-400" /> : <Mic size={22} />}
-                </button>
-
-                <button
-                  type="button"
                   onClick={disconnect}
                   className="flex items-center justify-center active:scale-90 transition-all touch-manipulation"
                   style={{ WebkitTapHighlightColor: 'transparent' }}
