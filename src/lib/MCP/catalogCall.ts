@@ -31,5 +31,10 @@ export async function callCatalogMcp(
   });
 
   const rawBody = await response.text();
-  return JSON.parse(rawBody);
+  return JSON.parse(
+  rawBody
+    .split(/\r?\n/)
+    .find((line) => line.startsWith("data:"))
+    ?.replace(/^data:\s*/, "") || rawBody,
+);
 }

@@ -1,4 +1,15 @@
-import { AGENT_PROFILE_URL, CART_MCP_ENDPOINT } from "../GeminiTools/config.ts";
+import { AGENT_PROFILE_URL, CART_MCP_ENDPOINT } from "../GeminiTools/config";
+
+function parseMcpResponse(rawBody: string): unknown {
+  const eventData = rawBody
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice("data:".length).trim())
+    .filter(Boolean)
+    .join("\n");
+
+  return JSON.parse(eventData || rawBody);
+}
 
 export async function callCartMcp(
   name: string,
@@ -31,10 +42,23 @@ export async function callCartMcp(
   });
 
   const rawBody = await response.text();
-  return JSON.parse(rawBody);
+
+  if (!response.ok) {
+    throw new Error(
+      `Cart MCP request failed: ${response.status} ${response.statusText}\n${rawBody}`,
+    );
+  }
+
+  console.log("[cart-mcp] raw response", rawBody);
+
+  return parseMcpResponse(rawBody);
 }
 
 export function isCartTool(name: string): boolean {
-  const cartTools = ["create_cart", "get_cart", "update_cart", "cancel_cart"];
-  return cartTools.includes(name);
+  return [
+    "create_cart",
+    "get_cart",
+    "update_cart",
+    "cancel_cart",
+  ].includes(name);
 }
