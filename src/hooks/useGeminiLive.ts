@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import { GoogleGenAI, Modality, type LiveServerMessage } from "@google/genai";
 import { callCartMcp, isCartTool } from "../lib/MCP/cartCall";
 import { callCatalogMcp } from "../lib/MCP/catalogCall";
+import { callFaqMcp } from "../lib/MCP/faqCall";
 import { toast } from "sonner";
 
 import {
@@ -9,6 +10,7 @@ import {
   AGENT_PROFILE_URL,
   MCP_ENDPOINT,
 } from "../lib/GeminiTools";
+import { FAQ_AND_POLICIES_TOOLS } from "../lib/GeminiTools/faq.tools";
 
 const INPUT_RATE = 16000;
 const OUTPUT_RATE = 24000;
@@ -534,12 +536,18 @@ export function useGeminiLive(
           config: {
             responseModalities: [Modality.AUDIO],
             systemInstruction: systemMessageSettings.systemInstruction,
-            tools: AGENT_SHOP_TOOLS as any,
+
+            tools: [
+              ...AGENT_SHOP_TOOLS,
+              ...FAQ_AND_POLICIES_TOOLS,
+            ] as any,
+
             speechConfig: {
               voiceConfig: {
                 prebuiltVoiceConfig: { voiceName: selectedVoice },
               },
             },
+
             ...(consentTranscriptionRef.current
               ? {
                   inputAudioTranscription: {},
@@ -567,30 +575,10 @@ export function useGeminiLive(
                 for (const call of calls) {
                   const { name, args, id } = call;
 
-                    if (isCartTool(name ?? "")) {
-                      const toolData = await callCartMcp(name as any, id ?? "", args);
-
-                      (window as any).LiveCommerce?.ingest(toolData);
-                      onToolResult?.(toolData);
-
-                      sessionRef.current?.sendToolResponse({
-                        functionResponses: [
-                          {
-                            name,
-                            id,
-                            response: { result: toolData },
-                          },
-                        ],
-                      });
-
-                      continue;
-                    }
-
-                    const mcpPayload = await callCatalogMcp(name ?? "", id ?? "", args);
-                    const toolData = unwrapMcpResult(mcpPayload);
+                  if (isCartTool(name ?? "")) {
+                    const toolData = await callCartMcp(name as any, id ?? "", args);
 
                     (window as any).LiveCommerce?.ingest(toolData);
-
                     onToolResult?.(toolData);
 
                     sessionRef.current?.sendToolResponse({
@@ -602,6 +590,50 @@ export function useGeminiLive(
                         },
                       ],
                     });
+
+                    continue;
+                  }
+
+                  if (
+                    name === "search_faq" ||
+                    name === "get_policy" ||
+                    name === "list_policies"
+                  ) {
+                    const faqRawBody = await callFaqMcp(name, id, args);
+                    const toolData = unwrapMcpResult(parseMcpResponse(faqRawBody));
+
+                    (window as any).LiveCommerce?.ingest(toolData);
+                    onToolResult?.(toolData);
+
+                    sessionRef.current?.sendToolResponse({
+                      functionResponses: [
+                        {
+                          name,
+                          id,
+                          response: { result: toolData },
+                        },
+                      ],
+                    });
+
+                    continue;
+                  }
+
+                  const mcpPayload = await callCatalogMcp(name ?? "", id ?? "", args);
+                  const toolData = unwrapMcpResult(mcpPayload);
+
+                  (window as any).LiveCommerce?.ingest(toolData);
+
+                  onToolResult?.(toolData);
+
+                  sessionRef.current?.sendToolResponse({
+                    functionResponses: [
+                      {
+                        name,
+                        id,
+                        response: { result: toolData },
+                      },
+                    ],
+                  });
                 }
 
                 return;
