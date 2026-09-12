@@ -14,7 +14,7 @@ import {
 const INPUT_RATE = 16000;
 const OUTPUT_RATE = 24000;
 const OUTPUT_PREBUFFER_SAMPLES = 2400;
-const VIDEO_INTERVAL_MS = 100;
+const VIDEO_INTERVAL_MS = 500;
 
 type LiveSystemMessageSettings = {
   systemInstruction: string;
