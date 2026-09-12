@@ -203,14 +203,6 @@ Requires meta["idempotency-key"] containing a UUID, in addition to meta["ucp-age
 Cancellation removes the cart from storage. Subsequent requests for the same cart ID return a 'not_found' business outcome.
 Use this only when the user requests or clearly authorizes cancellation.
 
-generate_image
-Generate an original image from a text description through the image generation service.
-Use this when the buyer asks for artwork, concept visuals, mockups, illustrations, or any picture described in words rather than an existing catalog product.
-Keep the prompt concrete: subject, style, lighting, composition, and any details the buyer specified.
-One call produces one image. For several images, make one call per image.
-The response carries a public image URL for the generated image.
-Do not promise edits to an existing image through this tool.
-
 get_ui_state
 Retrieve the current state of the Commerce Layer.
 Use this tool to verify what the buyer is currently seeing on their screen, including selected product variants, cart contents, and the current stage of the shopping progression.

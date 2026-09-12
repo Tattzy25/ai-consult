@@ -3,7 +3,6 @@ import { GoogleGenAI, Modality, type LiveServerMessage } from "@google/genai";
 import { callCartMcp, isCartTool } from "../lib/MCP/cartCall";
 import { callCatalogMcp } from "../lib/MCP/catalogCall";
 import { callFaqMcp } from "../lib/MCP/faqCall";
-import { callImageMcp } from "../lib/MCP/imageCall";
 import { toast } from "sonner";
 
 import {
@@ -621,6 +620,7 @@ export function useGeminiLive(
                     const imageRawBody = await callImageMcp(name, id ?? "", args);
                     const toolData = unwrapMcpResult(parseMcpResponse(imageRawBody));
 
+                    (window as any).LiveCommerce?.ingest(toolData);
                     onToolResult?.(toolData);
 
                     sessionRef.current?.sendToolResponse({
