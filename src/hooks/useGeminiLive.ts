@@ -616,25 +616,7 @@ export function useGeminiLive(
                     continue;
                   }
 
-                  if (name === "generate_image" || name === "edit_image") {
-                    const imageRawBody = await callImageMcp(name, id ?? "", args);
-                    const toolData = unwrapMcpResult(parseMcpResponse(imageRawBody));
-
-                    (window as any).LiveCommerce?.ingest(toolData);
-                    onToolResult?.(toolData);
-
-                    sessionRef.current?.sendToolResponse({
-                      functionResponses: [
-                        {
-                          name,
-                          id,
-                          response: { result: toolData },
-                        },
-                      ],
-                    });
-
-                    continue;
-                  }
+                  
 
                   const mcpPayload = await callCatalogMcp(name ?? "", id ?? "", args);
                   const toolData = unwrapMcpResult(mcpPayload);
