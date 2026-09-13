@@ -9,8 +9,7 @@ export async function callCatalogMcp(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Accept: "application/json, text/event-stream",
-      "MCP-Protocol-Version": "2025-11-25",
+      Accept: "application/json, text/event-stream"
     },
     body: JSON.stringify({
       jsonrpc: "2.0",
