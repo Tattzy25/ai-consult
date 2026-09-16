@@ -571,22 +571,53 @@ export function useGeminiLive(
                 for (const call of calls) {
                   const { name, args, id } = call;
 
-                  const mcpPayload = await callCatalogMcp(name ?? "", id ?? "", args);
-                  const toolData = unwrapMcpResult(mcpPayload);
+                  try {
+                    if (name === "get_ui_state") {
+                      const toolData = (window as any).LiveCommerce?.getUiState?.() ?? { error: "UI state unavailable" };
 
-                  (window as any).LiveCommerce?.ingest(toolData);
+                      onToolResult?.(toolData);
 
-                  onToolResult?.(toolData);
+                      sessionRef.current?.sendToolResponse({
+                        functionResponses: [
+                          {
+                            name,
+                            id,
+                            response: { result: toolData },
+                          },
+                        ],
+                      });
+                      continue;
+                    }
 
-                  sessionRef.current?.sendToolResponse({
-                    functionResponses: [
-                      {
-                        name,
-                        id,
-                        response: { result: toolData },
-                      },
-                    ],
-                  });
+                    const mcpPayload = await callCatalogMcp(name ?? "", id ?? "", args);
+                    const toolData = unwrapMcpResult(mcpPayload);
+
+                    (window as any).LiveCommerce?.ingest(toolData);
+
+                    onToolResult?.(toolData);
+
+                    sessionRef.current?.sendToolResponse({
+                      functionResponses: [
+                        {
+                          name,
+                          id,
+                          response: { result: toolData },
+                        },
+                      ],
+                    });
+                  } catch (error) {
+                    console.error(`Tool call ${name} failed:`, error);
+                    
+                    sessionRef.current?.sendToolResponse({
+                      functionResponses: [
+                        {
+                          name,
+                          id,
+                          response: { error: error instanceof Error ? error.message : "Unknown tool error" },
+                        },
+                      ],
+                    });
+                  }
                 }
 
                 return;
