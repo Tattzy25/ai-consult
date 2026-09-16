@@ -158,3 +158,5 @@ a chip on the detail sheet when returned; nothing assumes physical shipping.
 
 **Mute button:** not from this layer — your in-call dock in `App.tsx` already had
 `Mic/MicOff + toggleMute`; the commerce layer adds no controls to the dock.
+
+wtf
