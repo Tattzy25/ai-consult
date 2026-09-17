@@ -6,8 +6,9 @@ import { PhoneCallIcon, type PhoneCallIconHandle } from './components/ui/phone-c
 import { CameraPreview } from './components/video/CameraPreview';
 import { ConnectingOverlay } from './components/ui/ConnectingOverlay';
 import { WreckShader } from './components/WreckShader';
-import { useGeminiLive } from './hooks/useGeminiLive';
+import { useGeminiLive, type GeminiLiveToolCall } from './hooks/useGeminiLive';
 import { SYSTEM_MESSAGE_SETTINGS } from './lib/SystemMessage';
+import { callCatalogMcp } from './lib/MCP/catalogCall';
 import { LiveCommerce, type LiveCommerceHandle, type CommerceIntent } from '../commerce';
 
 export default function App() {
@@ -30,6 +31,18 @@ export default function App() {
     }
   };
 
+  const dispatchGeminiToolCall = async ({ name, id, args }: GeminiLiveToolCall) => {
+    const commerce = commerceRef.current as LiveCommerceHandle;
+
+    if (name === 'get_ui_state') {
+      return commerce.snapshot();
+    }
+
+    const mcpPayload = await callCatalogMcp(name, id, args);
+    commerce.ingest(mcpPayload);
+    return mcpPayload;
+  };
+
   const {
     isConnected,
     isMuted,
@@ -44,7 +57,7 @@ export default function App() {
     disconnect,
     toggleMute,
     flipCamera,
-  } = useGeminiLive(SYSTEM_MESSAGE_SETTINGS);
+  } = useGeminiLive(SYSTEM_MESSAGE_SETTINGS, dispatchGeminiToolCall);
 
   React.useEffect(() => {
     if (status === "connecting") {

@@ -1,13 +1,8 @@
 import { useCallback, useRef, useState } from "react";
 import { GoogleGenAI, Modality, type LiveServerMessage } from "@google/genai";
-import { callCatalogMcp } from "../lib/MCP/catalogCall";
 import { toast } from "sonner";
 
-import {
-  AGENT_SHOP_TOOLS,
-  AGENT_PROFILE_URL,
-  MCP_ENDPOINT,
-} from "../lib/GeminiTools";
+import { AGENT_SHOP_TOOLS } from "../lib/GeminiTools";
 
 const INPUT_RATE = 16000;
 const OUTPUT_RATE = 24000;
@@ -22,19 +17,13 @@ type LiveSystemMessageSettings = {
 
 type TranscriptItem = { role: "user" | "agent"; text: string };
 
-type McpToolCallResult = {
-  result?: {
-    content?: Array<{
-      type?: string;
-      text?: string;
-      [key: string]: unknown;
-    }>;
-    structuredContent?: unknown;
-    [key: string]: unknown;
-  };
-  error?: unknown;
-  [key: string]: unknown;
-};
+export type GeminiLiveToolCall = NonNullable<
+  NonNullable<LiveServerMessage["toolCall"]>["functionCalls"]
+>[number] & { name: string; id: string };
+
+export type GeminiLiveToolDispatcher = (
+  call: GeminiLiveToolCall,
+) => Promise<unknown> | unknown;
 
 function pcm16ToBase64(pcm: Int16Array): string {
   const bytes = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength);
@@ -59,35 +48,9 @@ function base64ToPCM16(base64: string): Int16Array {
   return new Int16Array(bytes.buffer);
 }
 
-function parseMcpResponse(rawBody: string): McpToolCallResult {
-  const eventData = rawBody
-    .split(/\r?\n/)
-    .filter((line) => line.startsWith("data:"))
-    .map((line) => line.slice("data:".length).trim())
-    .filter(Boolean)
-    .join("\n");
-
-  return JSON.parse(eventData || rawBody) as McpToolCallResult;
-}
-
-function unwrapMcpResult(payload: McpToolCallResult): unknown {
-  const text = payload.result?.content?.find(
-    (content) => content.type === "text" && typeof content.text === "string",
-  )?.text;
-
-  if (!text) {
-    return payload.result?.structuredContent ?? payload;
-  }
-
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text;
-  }
-}
-
 export function useGeminiLive(
   systemMessageSettings: LiveSystemMessageSettings,
+  dispatchToolCall: GeminiLiveToolDispatcher,
   onToolResult?: (data: unknown) => void,
 ) {
   const [isConnected, setIsConnected] = useState(false);
@@ -565,59 +528,25 @@ export function useGeminiLive(
             },
             onmessage: async (message: LiveServerMessage) => {
               if (message.toolCall) {
-                const calls = message.toolCall.functionCalls;
+                const calls = message.toolCall.functionCalls as GeminiLiveToolCall[];
                 if (!calls) return;
 
                 for (const call of calls) {
-                  const { name, args, id } = call;
+                  const { name, id } = call;
 
-                  try {
-                    if (name === "get_ui_state") {
-                      const toolData = (window as any).LiveCommerce?.getUiState?.() ?? { error: "UI state unavailable" };
+                  const toolData = await dispatchToolCall(call);
 
-                      onToolResult?.(toolData);
+                  onToolResult?.(toolData);
 
-                      sessionRef.current?.sendToolResponse({
-                        functionResponses: [
-                          {
-                            name,
-                            id,
-                            response: { result: toolData },
-                          },
-                        ],
-                      });
-                      continue;
-                    }
-
-                    const mcpPayload = await callCatalogMcp(name ?? "", id ?? "", args);
-                    const toolData = unwrapMcpResult(mcpPayload);
-
-                    (window as any).LiveCommerce?.ingest(toolData);
-
-                    onToolResult?.(toolData);
-
-                    sessionRef.current?.sendToolResponse({
-                      functionResponses: [
-                        {
-                          name,
-                          id,
-                          response: { result: toolData },
-                        },
-                      ],
-                    });
-                  } catch (error) {
-                    console.error(`Tool call ${name} failed:`, error);
-                    
-                    sessionRef.current?.sendToolResponse({
-                      functionResponses: [
-                        {
-                          name,
-                          id,
-                          response: { error: error instanceof Error ? error.message : "Unknown tool error" },
-                        },
-                      ],
-                    });
-                  }
+                  sessionRef.current?.sendToolResponse({
+                    functionResponses: [
+                      {
+                        name,
+                        id,
+                        response: { result: toolData },
+                      },
+                    ],
+                  });
                 }
 
                 return;
@@ -729,6 +658,7 @@ export function useGeminiLive(
       endSessionTracking,
       enqueueOutputPCM,
       initAudio,
+      dispatchToolCall,
       onToolResult,
       resetPlayback,
       startStreaming,
