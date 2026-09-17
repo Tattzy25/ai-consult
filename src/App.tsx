@@ -11,6 +11,36 @@ import { SYSTEM_MESSAGE_SETTINGS } from './lib/SystemMessage';
 import { callCatalogMcp } from './lib/MCP/catalogCall';
 import { LiveCommerce, type LiveCommerceHandle, type CommerceIntent } from '../commerce';
 
+type McpToolCallResult = {
+  result?: {
+    content?: Array<{
+      type?: string;
+      text?: string;
+      [key: string]: unknown;
+    }>;
+    structuredContent?: unknown;
+    [key: string]: unknown;
+  };
+  error?: unknown;
+  [key: string]: unknown;
+};
+
+function unwrapMcpResult(payload: McpToolCallResult): unknown {
+  const text = payload.result?.content?.find(
+    (content) => content.type === 'text' && typeof content.text === 'string',
+  )?.text;
+
+  if (!text) {
+    return payload.result?.structuredContent ?? payload;
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
 export default function App() {
   const stageRef = useRef<HTMLDivElement>(null);
   const phoneIconRef = useRef<PhoneCallIconHandle>(null);
@@ -39,8 +69,9 @@ export default function App() {
     }
 
     const mcpPayload = await callCatalogMcp(name, id, args);
-    commerce.ingest(mcpPayload);
-    return mcpPayload;
+    const toolData = unwrapMcpResult(mcpPayload);
+    commerce.ingest(toolData);
+    return toolData;
   };
 
   const {
