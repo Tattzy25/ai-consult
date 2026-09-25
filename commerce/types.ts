@@ -1,14 +1,6 @@
 /**
  * commerce/types.ts — display models for the live commerce layer.
- *
- * Rules honored here:
- *  · Every normalized node keeps its COMPLETE original object in `raw`.
- *  · Nothing is calculated: prices/totals/availability are strings rendered
- *    exactly as the merchant returned them (or formatted from a returned
- *    number + returned currency, which is presentation, not math).
- *  · Unknown / future fields survive untouched inside `raw`.
  */
-
 export type Raw = any;
 
 export interface LabelValue {
@@ -19,15 +11,15 @@ export interface LabelValue {
 
 export interface OptionValue {
   label: string;
-  available: boolean | null;      // null = merchant said nothing
-  priceLabel: string | null;      // variant/value-specific price, as returned
-  media: string | null;           // variant/value-specific media, as returned
+  available: boolean | null;
+  priceLabel: string | null;
+  media: string | null;
   raw: Raw;
 }
 
 export interface OptionGroup {
   id: string;
-  label: string;                  // "Color", "Size", "Width", "Denomination", anything
+  label: string;
   values: OptionValue[];
   raw: Raw;
 }
@@ -35,7 +27,7 @@ export interface OptionGroup {
 export interface Variant {
   id: string;
   label: string;
-  options: Record<string, string>;   // { Color: "Black", Size: "M" } as returned
+  options: Record<string, string>;
   priceLabel: string | null;
   availability: string | null;
   media: string[];
@@ -44,18 +36,18 @@ export interface Variant {
 
 export interface Product {
   id: string;
-  raw: Raw;                          // COMPLETE original product object
+  raw: Raw;
   title: string;
-  seller: string | null;             // seller / store / domain / brand
-  priceLabel: string | null;         // "$19.99" | "From $12.00" | null
+  seller: string | null;
+  priceLabel: string | null;
   compareLabel: string | null;
   media: string[];
   description: string | null;
-  rating: number | null;             // 0..5
+  rating: number | null;
   reviews: number | null;
   badge: string | null;
   availability: string | null;
-  deliveryLabel: string | null;   // digital/fulfillment hint, only when returned
+  deliveryLabel: string | null;
   url: string | null;
   options: OptionGroup[];
   variants: Variant[];
@@ -67,24 +59,24 @@ export interface CartLine {
   title: string;
   media: string | null;
   qty: number | null;
-  optionsLabel: string | null;       // selected option labels, as returned
+  optionsLabel: string | null;
   priceLabel: string | null;
 }
 
 export interface CartState {
-  raw: Raw;                          // COMPLETE original cart result
+  raw: Raw;
   lines: CartLine[];
-  totals: LabelValue[];              // rendered, never computed
+  totals: LabelValue[];
   messages: string[];
   recommendations: Product[];
 }
 
 export interface CheckoutState {
-  raw: Raw;                          // COMPLETE original checkout result
+  raw: Raw;
   mode: 'iframe' | 'external' | 'inline' | 'unknown';
-  url: string | null;                // exact continuation/embed info returned
+  url: string | null;
   messages: string[];
-  progress: string[];                // returned steps/progress labels
+  progress: string[];
   buyerActions: { label: string; raw: Raw }[];
 }
 
@@ -96,18 +88,20 @@ export interface OrderState {
 }
 
 export type Stage =
-  | 'idle'          // nothing returned yet → render nothing
-  | 'discovery'     // shelf / carousel of results
-  | 'detail'        // product detail + description
-  | 'options'       // dynamic option/variant selection (detail sub-stage)
-  | 'cartConfirm'   // compact confirmation after an add-to-cart result
-  | 'cart'          // full cart review
-  | 'checkout'      // continuation / embedded checkout
-  | 'complete';     // order completion
+  | 'idle'
+  | 'discovery'
+  | 'detail'
+  | 'options';
 
 export type View =
-  | 'discovery' | 'detail' | 'cartConfirm' | 'cart'
-  | 'checkout' | 'complete' | 'message' | 'unknown';
+  | 'discovery' 
+  | 'detail' 
+  | 'cartConfirm' 
+  | 'cart'
+  | 'checkout' 
+  | 'complete' 
+  | 'message' 
+  | 'unknown';
 
 export interface RoutedResult {
   view: View;
@@ -121,8 +115,6 @@ export interface RoutedResult {
   raw: Raw;
 }
 
-/** Intents flow OUT to the host (App / Gemini tool-caller). The commerce layer
- *  never performs commerce itself — it asks the host to. */
 export type CommerceIntent =
   | { type: 'select_product';   raw: Raw }
   | { type: 'add_to_cart';      raw: Raw; variantRaw: Raw | null; selectedOptions: Record<string, string> }
@@ -135,7 +127,6 @@ export type CommerceIntent =
   | { type: 'continue_browsing' }
   | { type: 'close' };
 
-/** Voice-agent-readable mirror of what is on screen right now. */
 export interface CommerceSnapshot {
   stage: Stage;
   minimized: boolean;
@@ -146,8 +137,6 @@ export interface CommerceSnapshot {
   selectedOptions: Record<string, string>;
   selectedVariant: { id: string; label: string } | null;
   cart: { lines: number; units: number; totals: LabelValue[]; messages: string[] } | null;
-  checkout: { mode: CheckoutState['mode']; url: string | null } | null;
-  order: { id: string | null; message: string | null } | null;
   lastRaw: Raw;
 }
 

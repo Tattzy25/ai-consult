@@ -26,11 +26,11 @@ import React, {
 } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  ChevronLeft, ChevronRight, ChevronDown, ChevronUp, X, Minus, Plus, Trash2,
-  ShoppingBag, CheckCircle2, Loader2, Store, ExternalLink,
+  ChevronLeft, ChevronRight, ChevronDown, ChevronUp, X,
+  ShoppingBag, Loader2,
 } from 'lucide-react';
 import type {
-  Raw, Stage, View, Product, CartState, CheckoutState, OrderState,
+  Raw, Stage, View, Product, CartState,
   CommerceIntent, CommerceSnapshot, LiveCommerceHandle, RoutedResult,
 } from './types';
 import { routeResult } from './route';
@@ -106,8 +106,6 @@ const LiveCommerce = forwardRef<LiveCommerceHandle, LiveCommerceProps>(function 
   const [selections, setSelections] = useState<Record<string, string>>({});
   const [showAll, setShowAll] = useState<Record<string, boolean>>({});
   const [cart, setCart] = useState<CartState | null>(null);
-  const [checkout, setCheckout] = useState<CheckoutState | null>(null);
-  const [order, setOrder] = useState<OrderState | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [pendingAdd, setPendingAdd] = useState(false);
   const lastRaw = useRef<Raw>(null);
@@ -139,16 +137,15 @@ const LiveCommerce = forwardRef<LiveCommerceHandle, LiveCommerceProps>(function 
   useEffect(() => {
     if (!sessionActive) {
       setStage('idle'); setProducts([]); setPage(0); setMinimized(false); setActive(null);
-      setSelections({}); setShowAll({}); setCart(null); setCheckout(null); setOrder(null);
+      setSelections({}); setShowAll({}); setCart(null);
       setPendingAdd(false); lastRaw.current = null;
     }
   }, [sessionActive]);
 
   const backFrom = useCallback((s: Stage): Stage => {
     if (s === 'options') return 'detail';
-    if (s === 'checkout') return cart ? 'cart' : 'discovery';
     return products.length ? 'discovery' : 'idle';
-  }, [cart, products.length]);
+  }, [products.length]);
 
   /* ── data in ─────────────────────────────────────────────────────────── */
   const ingest = useCallback((raw: Raw, hint?: { view?: View }): RoutedResult => {
@@ -163,16 +160,12 @@ const LiveCommerce = forwardRef<LiveCommerceHandle, LiveCommerceProps>(function 
         if (routed.product) setStage('detail');
         break;
       case 'cartConfirm':
-        setCart(routed.cart); setPendingAdd(false); setStage('cartConfirm');
-        break;
       case 'cart':
-        setCart(routed.cart); setStage('cart');
+        setCart(routed.cart); setPendingAdd(false);
         break;
       case 'checkout':
-        setCheckout(routed.checkout); setPendingAdd(false); setStage('checkout');
-        break;
       case 'complete':
-        setOrder(routed.order); setPendingAdd(false); setStage('complete');
+        setPendingAdd(false);
         break;
       case 'message':
         if (routed.messages[0]) say(routed.messages[0]);
@@ -197,9 +190,8 @@ const LiveCommerce = forwardRef<LiveCommerceHandle, LiveCommerceProps>(function 
         setTimeout(() => setPendingAdd(false), 10000); // safety net if no result ever arrives
         break;
       case 'open_cart':
-        if (cart) setStage('cart');
-        nav(intent);
-        return;
+        // No local UI anymore; host handles native cart page
+        break;
       case 'continue_browsing':
         setStage(products.length ? 'discovery' : 'idle');
         nav(intent);
@@ -216,7 +208,7 @@ const LiveCommerce = forwardRef<LiveCommerceHandle, LiveCommerceProps>(function 
 
   const reset = useCallback(() => {
     setStage('idle'); setProducts([]); setPage(0); setMinimized(false); setActive(null);
-    setSelections({}); setShowAll({}); setCart(null); setCheckout(null); setOrder(null);
+    setSelections({}); setShowAll({}); setCart(null);
     setPendingAdd(false); lastRaw.current = null;
   }, []);
 
@@ -232,7 +224,7 @@ const LiveCommerce = forwardRef<LiveCommerceHandle, LiveCommerceProps>(function 
     return active.variants.find(v => keys.every(k => v.options[k] === selections[k])) ?? null;
   }, [active, selections]);
 
-  const snapshot = useCallback((): CommerceSnapshot => ({
+    const snapshot = useCallback((): CommerceSnapshot => ({
     stage,
     minimized,
     resultCount: products.length,
@@ -246,10 +238,8 @@ const LiveCommerce = forwardRef<LiveCommerceHandle, LiveCommerceProps>(function 
       units: cart.lines.reduce((n, l) => n + (l.qty ?? 1), 0),
       totals: cart.totals, messages: cart.messages,
     } : null,
-    checkout: checkout ? { mode: checkout.mode, url: checkout.url } : null,
-    order: order ? { id: order.id, message: order.message } : null,
     lastRaw: lastRaw.current,
-  }), [stage, minimized, products.length, page, pages, active, selections, matchedVariant, cart, checkout, order]);
+  }), [stage, minimized, products.length, page, pages, active, selections, matchedVariant, cart]);
 
   useImperativeHandle(ref, () => ({ ingest, act, snapshot, reset }), [ingest, act, snapshot, reset]);
 
@@ -265,7 +255,7 @@ const LiveCommerce = forwardRef<LiveCommerceHandle, LiveCommerceProps>(function 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
-      if (stage === 'detail' || stage === 'options' || stage === 'cart' || stage === 'cartConfirm') {
+      if (stage === 'detail' || stage === 'options') {
         act({ type: 'close' });
       }
     };
@@ -282,7 +272,6 @@ const LiveCommerce = forwardRef<LiveCommerceHandle, LiveCommerceProps>(function 
   const detailPrice = matchedVariant?.priceLabel ?? active?.priceLabel ?? null;
   const detailMedia = matchedVariant?.media[0] ?? active?.media[0] ?? null;
   const detailAvail = matchedVariant?.availability ?? active?.availability ?? null;
-  const cartUnits = cart?.lines.reduce((n, l) => n + (l.qty ?? 1), 0) ?? 0;
 
   const openDetail = (p: Product) => {
     setActive(p); setSelections({}); setShowAll({}); setStage('detail');
@@ -508,223 +497,6 @@ const LiveCommerce = forwardRef<LiveCommerceHandle, LiveCommerceProps>(function 
               </div>
             </motion.div>
           </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* ── 4 · CART CONFIRMATION (compact, merchant-returned only) ──────── */}
-      <AnimatePresence>
-        {stage === 'cartConfirm' && cart && (
-          <motion.div key="confirm" initial={{ y: 24, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 24, opacity: 0 }}
-            className="pointer-events-auto absolute bottom-20 left-1/2 w-[min(92%,440px)] -translate-x-1/2 rounded-2xl border border-white/15 bg-black/85 p-3 shadow-[0_18px_50px_rgba(0,0,0,0.55)] backdrop-blur-xl">
-            <div className="flex items-center gap-3">
-              <CheckCircle2 size={22} className="shrink-0 text-emerald-400" />
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-bold">{cart.lines[0]?.title ?? 'Added to bag'}</div>
-                <div className="truncate text-[11px] text-white/60">
-                  {[cart.lines[0]?.optionsLabel, cart.lines[0]?.qty != null ? `Qty ${cart.lines[0].qty}` : null, cart.lines[0]?.priceLabel].filter(Boolean).join(' · ') || (cart.messages[0] ?? '')}
-                </div>
-              </div>
-              <button type="button" onClick={() => act({ type: 'close' })} aria-label="Dismiss"
-                className="grid h-7 w-7 place-items-center rounded-full bg-white/10 hover:bg-white/20">
-                <X size={14} />
-              </button>
-            </div>
-            {cart.messages.slice(0, 2).map((m, i) => (
-              <div key={i} className="mt-1.5 text-[11px] text-amber-300">{m}</div>
-            ))}
-            {cart.totals.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-0.5 border-t border-white/10 pt-2">
-                {cart.totals.map(t => (
-                  <span key={t.label} className="text-[11px] text-white/70">{t.label}: <b className="text-white">{t.display}</b></span>
-                ))}
-              </div>
-            )}
-            <div className="mt-2.5 flex items-center gap-2">
-              <button type="button" onClick={() => act({ type: 'continue_browsing' })}
-                className="flex-1 rounded-full bg-white/10 py-2 text-xs font-bold hover:bg-white/20">Continue browsing</button>
-              <button type="button" onClick={() => act({ type: 'open_cart' })}
-                className="flex-1 rounded-full bg-white/10 py-2 text-xs font-bold hover:bg-white/20">View cart</button>
-              <button type="button" onClick={() => emit({ type: 'checkout', cartRaw: cart.raw })}
-                className="flex-1 rounded-full bg-green-500 py-2 text-xs font-extrabold text-black hover:bg-green-400">Checkout</button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* ── 5 · CART REVIEW ─────────────────────────────────────────────── */}
-      <AnimatePresence>
-        {stage === 'cart' && cart && (
-          <motion.div key="cart" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="pointer-events-auto absolute inset-0 grid place-items-center bg-black/60 p-4 backdrop-blur-md"
-            onClick={e => { if (e.target === e.currentTarget) act({ type: 'close' }); }}>
-            <motion.div initial={{ scale: 0.94, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.96, opacity: 0 }}
-              className="flex max-h-[86%] w-[min(94%,520px)] flex-col gap-3 overflow-hidden rounded-3xl border border-white/15 bg-zinc-950/95 p-4 backdrop-blur-xl">
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm font-extrabold tracking-[0.06em]">YOUR BAG · {cartUnits} unit{cartUnits === 1 ? '' : 's'}</h2>
-                <button type="button" onClick={() => act({ type: 'close' })} aria-label="Close cart"
-                  className="grid h-8 w-8 place-items-center rounded-full bg-white/10 hover:bg-white/20">
-                  <X size={15} />
-                </button>
-              </div>
-
-              <div className={cx('flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto', NO_SB)}>
-                {cart.lines.length === 0 && <div className="py-6 text-center text-xs text-white/50">Cart is empty.</div>}
-                {cart.lines.map(l => (
-                  <div key={l.id} className="flex items-center gap-3 rounded-2xl bg-white/5 p-2">
-                    <span className="h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-zinc-800">
-                      {l.media ? <img src={l.media} alt="" className="h-full w-full object-cover" /> : <span className="grid h-full w-full place-items-center text-sm font-extrabold text-zinc-500">{initials(l.title)}</span>}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-xs font-bold">{l.title}</span>
-                      {l.optionsLabel && <span className="block truncate text-[10px] text-white/55">{l.optionsLabel}</span>}
-                      {l.priceLabel && <span className="block text-[11px] font-extrabold text-white/85">{l.priceLabel}</span>}
-                    </span>
-                    <span className="flex items-center gap-1.5">
-                      <button type="button" onClick={() => emit({ type: 'update_qty', lineRaw: l.raw, qty: Math.max(1, (l.qty ?? 1) - 1) })}
-                        className="grid h-6 w-6 place-items-center rounded-full bg-white/10 hover:bg-white/20" aria-label="Decrease quantity"><Minus size={12} /></button>
-                      <span className="w-5 text-center text-xs font-bold">{l.qty ?? '—'}</span>
-                      <button type="button" onClick={() => emit({ type: 'update_qty', lineRaw: l.raw, qty: (l.qty ?? 1) + 1 })}
-                        className="grid h-6 w-6 place-items-center rounded-full bg-white/10 hover:bg-white/20" aria-label="Increase quantity"><Plus size={12} /></button>
-                      <button type="button" onClick={() => emit({ type: 'remove_line', lineRaw: l.raw })}
-                        className="ml-1 grid h-6 w-6 place-items-center rounded-full bg-white/10 text-red-400 hover:bg-red-500/20" aria-label="Remove item"><Trash2 size={12} /></button>
-                    </span>
-                  </div>
-                ))}
-
-                {cart.messages.map((m, i) => <div key={i} className="text-[11px] text-amber-300">{m}</div>)}
-
-                {cart.totals.length > 0 && (
-                  <div className="flex flex-col gap-1 border-t border-white/10 pt-2">
-                    {cart.totals.map(t => (
-                      <div key={t.label} className="flex justify-between text-xs text-white/70">
-                        <span>{t.label}</span><b className="text-white">{t.display}</b>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {cart.recommendations.length > 0 && (
-                  <div>
-                    <div className="mb-1.5 text-[10px] font-extrabold uppercase tracking-[0.12em] text-white/50">You may also like</div>
-                    <div className={cx('flex gap-2 overflow-x-auto pb-1', NO_SB)}>
-                      {cart.recommendations.slice(0, 4).map(p => (
-                        <button key={p.id} type="button" onClick={() => openDetail(p)}
-                          className="w-24 shrink-0 rounded-xl bg-zinc-50 p-1 text-left text-zinc-900 hover:-translate-y-0.5 transition-transform">
-                          <span className="block aspect-square overflow-hidden rounded-lg bg-zinc-200"><Thumb p={p} /></span>
-                          <span className="mt-1 line-clamp-1 text-[9.5px] font-semibold">{p.title}</span>
-                          <span className="block text-[9.5px] font-extrabold">{p.priceLabel ?? '—'}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="flex gap-2 pt-1">
-                <button type="button" onClick={() => act({ type: 'continue_browsing' })}
-                  className="flex-1 rounded-full bg-white/10 py-2.5 text-xs font-bold hover:bg-white/20">Continue browsing</button>
-                <button type="button" onClick={() => emit({ type: 'checkout', cartRaw: cart.raw })}
-                  className="flex-1 rounded-full bg-green-500 py-2.5 text-xs font-extrabold text-black hover:bg-green-400">Checkout</button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* ── 6 · CHECKOUT CONTINUATION / EMBED ───────────────────────────── */}
-      <AnimatePresence>
-        {stage === 'checkout' && checkout && (
-          <motion.div key="checkout" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="pointer-events-auto absolute inset-0 grid place-items-center bg-black/70 p-4 backdrop-blur-md">
-            <motion.div initial={{ scale: 0.95, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.97, opacity: 0 }}
-              className="flex max-h-[88%] w-[min(96%,760px)] flex-col overflow-hidden rounded-3xl border border-white/15 bg-zinc-50 text-zinc-900 shadow-2xl">
-              <div className="flex items-center gap-3 bg-zinc-950 px-4 py-3 text-white">
-                <Store size={16} className="shrink-0 text-green-400" />
-                <span className="flex-1 truncate text-xs font-extrabold tracking-[0.08em]">MERCHANT CHECKOUT</span>
-                {checkout.progress.map(s => (
-                  <span key={s} className="rounded-full bg-white/10 px-2 py-0.5 text-[9.5px] font-bold">{s}</span>
-                ))}
-                <button type="button" onClick={() => act({ type: 'close' })} aria-label="Back to cart"
-                  className="grid h-7 w-7 place-items-center rounded-full bg-white/10 hover:bg-white/20">
-                  <X size={14} />
-                </button>
-              </div>
-              {checkout.messages.length > 0 && (
-                <div className="border-b border-zinc-200 bg-amber-50 px-4 py-2 text-[11px] text-amber-800">
-                  {checkout.messages.join(' · ')}
-                </div>
-              )}
-              {checkout.mode === 'iframe' && checkout.url ? (
-                <iframe src={checkout.url} title="Merchant checkout" allow="payment; autoplay; camera; microphone"
-                  className="min-h-[320px] w-full flex-1 border-0 bg-white" />
-              ) : (
-                <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
-                  <ExternalLink size={28} className="text-zinc-400" />
-                  <p className="max-w-sm text-xs leading-relaxed text-zinc-600">
-                    {checkout.messages[0] ?? 'The merchant handles checkout on their own surface.'}
-                  </p>
-                  {checkout.url && (
-                    <button type="button" onClick={() => emit({ type: 'checkout_action', actionRaw: { type: 'open_external', url: checkout.url, raw: checkout.raw } })}
-                      className="rounded-full bg-zinc-900 px-5 py-2.5 text-xs font-extrabold text-white hover:bg-zinc-800">
-                      Continue to merchant checkout
-                    </button>
-                  )}
-                </div>
-              )}
-              {checkout.buyerActions.length > 0 && (
-                <div className="flex flex-wrap gap-2 border-t border-zinc-200 bg-zinc-100 px-4 py-3">
-                  {checkout.buyerActions.map((a, i) => (
-                    <button key={i} type="button" onClick={() => emit({ type: 'checkout_action', actionRaw: a.raw })}
-                      className="rounded-full border border-zinc-300 bg-white px-4 py-2 text-xs font-bold text-zinc-700 hover:bg-zinc-100">
-                      {a.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* ── 7 · ORDER COMPLETION ────────────────────────────────────────── */}
-      <AnimatePresence>
-        {stage === 'complete' && order && (
-          <motion.div key="complete" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="pointer-events-auto absolute inset-0 grid place-items-center bg-black/70 p-4 backdrop-blur-md">
-            <motion.div initial={{ scale: 0.92 }} animate={{ scale: 1 }} exit={{ scale: 0.96, opacity: 0 }}
-              className={cx('flex w-[min(92%,400px)] flex-col items-center gap-3 overflow-y-auto rounded-3xl bg-zinc-50 p-6 text-center text-zinc-900 shadow-2xl max-h-[86%]', NO_SB)}>
-              <CheckCircle2 size={44} className="text-emerald-500" />
-              <h2 className="text-lg font-black">Order complete</h2>
-              {order.id && <div className="rounded-full bg-zinc-200 px-3 py-1 font-mono text-[11px] font-bold text-zinc-700">{order.id}</div>}
-              {order.message && <p className="text-xs leading-relaxed text-zinc-600">{order.message}</p>}
-              {order.details.length > 0 && (
-                <div className="w-full flex-col gap-1 rounded-2xl bg-zinc-100 p-3">
-                  {order.details.map(d => (
-                    <div key={d.label} className="flex justify-between text-[11px] text-zinc-600">
-                      <span>{d.label}</span><b className="text-zinc-900">{d.display}</b>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <button type="button" onClick={() => act({ type: 'continue_browsing' })}
-                className="mt-1 w-full rounded-xl bg-zinc-900 py-3 text-sm font-extrabold text-white hover:bg-zinc-800">
-                Back to call
-              </button>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* ── persistent bag chip (only once a cart exists) ───────────────── */}
-      <AnimatePresence>
-        {cart && cart.lines.length > 0 && !['cart', 'checkout', 'complete'].includes(stage) && (
-          <motion.button key="bag" type="button" initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0, opacity: 0 }}
-            onClick={() => { act({ type: 'open_cart' }); emit({ type: 'refresh_cart' }); }}
-            className="pointer-events-auto absolute bottom-4 right-4 grid h-11 w-11 place-items-center rounded-full border border-white bg-black/80 shadow-[0_0_20px_rgba(0,0,0,0.8)] backdrop-blur-xl"
-            aria-label="Open cart">
-            <ShoppingBag size={19} />
-            <span className="absolute -right-1 -top-1 grid h-[17px] min-w-[17px] place-items-center rounded-full bg-red-500 px-1 text-[10px] font-extrabold text-white">{cartUnits}</span>
-          </motion.button>
         )}
       </AnimatePresence>
 
