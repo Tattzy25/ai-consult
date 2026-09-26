@@ -4,7 +4,7 @@ export async function callFaqMcp(
   args: unknown,
 ) {
   const faqResponse = await fetch(
-    "https://mcp-faq-policies-agent.facetimefy.com/",
+    "https://maaster-group-mcp.anigok.com/mcp",
     {
       method: "POST",
       headers: {

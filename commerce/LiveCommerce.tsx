@@ -114,7 +114,24 @@ const LiveCommerce = forwardRef<LiveCommerceHandle, LiveCommerceProps>(function 
   onIntentRef.current = onIntent;
 
   const pages = Math.max(1, Math.ceil(products.length / PER_PAGE));
-  const emit = useCallback((i: CommerceIntent) => onIntentRef.current?.(i), []);
+  const emit = useCallback((i: CommerceIntent) => {
+  onIntentRef.current?.(i);
+  // Broadcast to parent host (Liquid) for navigation delegation
+  if (i.type === 'open_cart' || i.type === 'checkout' || i.type === 'continue_browsing' || i.type === 'order_complete') {
+    window.parent.postMessage({
+      type: 'COMMERCE_INTENT',
+      payload: { action: i.type.toUpperCase(), raw: (i as any).raw }
+    }, '*'); // PRODUCTION NOTE: For max security, replace '*' with your shop's domain (e.g., 'https://your-store.myshopify.com')
+  }
+  onIntentRef.current?.(i);
+  // Broadcast to parent host (Liquid) for navigation delegation
+  if (i.type === 'open_cart' || i.type === 'checkout' || i.type === 'continue_browsing' || i.type === 'order_complete') {
+    window.parent.postMessage({
+      type: 'COMMERCE_INTENT',
+      payload: { action: i.type.toUpperCase(), raw: (i as any).raw }
+    }, '*'); // PRODUCTION NOTE: For max security, replace '*' with your shop's domain (e.g., 'https://your-store.myshopify.com')
+  }
+}, []);
   /** navigation intents stay silent unless the host explicitly opts in */
   const nav = useCallback((i: CommerceIntent) => { if (emitNavigationIntents) onIntentRef.current?.(i); }, [emitNavigationIntents]);
   const say = useCallback((m: string) => {
@@ -160,12 +177,29 @@ const LiveCommerce = forwardRef<LiveCommerceHandle, LiveCommerceProps>(function 
         if (routed.product) setStage('detail');
         break;
       case 'cartConfirm':
+        // Silent state update + toast, stay on current view. We do NOT render the cart.
+        setCart(routed.cart);
+        setPendingAdd(false);
+        say('Added to cart!');
+        break;
       case 'cart':
-        setCart(routed.cart); setPendingAdd(false);
+        // User asked to see cart: update state, tell host to navigate, minimize overlay
+        setCart(routed.cart);
+        setPendingAdd(false);
+        emit({ type: 'open_cart', raw: routed.cart?.raw ?? null } as CommerceIntent);
+        setMinimized(true);
         break;
       case 'checkout':
-      case 'complete':
         setPendingAdd(false);
+        emit({ type: 'checkout', cartRaw: routed.checkout?.raw ?? null });
+        setMinimized(true);
+        break;
+      case 'complete':
+        // Order complete: show toast, tell host, minimize overlay
+        setPendingAdd(false);
+        say('Order complete!');
+        emit({ type: 'order_complete', raw: routed.order?.raw ?? null } as CommerceIntent);
+        setMinimized(true);
         break;
       case 'message':
         if (routed.messages[0]) say(routed.messages[0]);
@@ -187,7 +221,6 @@ const LiveCommerce = forwardRef<LiveCommerceHandle, LiveCommerceProps>(function 
       }
       case 'add_to_cart':
         setPendingAdd(true);
-        setTimeout(() => setPendingAdd(false), 10000); // safety net if no result ever arrives
         break;
       case 'open_cart':
         // No local UI anymore; host handles native cart page

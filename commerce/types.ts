@@ -116,15 +116,16 @@ export interface RoutedResult {
 }
 
 export type CommerceIntent =
-  | { type: 'select_product';   raw: Raw }
-  | { type: 'add_to_cart';      raw: Raw; variantRaw: Raw | null; selectedOptions: Record<string, string> }
-  | { type: 'update_qty';       lineRaw: Raw; qty: number }
-  | { type: 'remove_line';      lineRaw: Raw }
+  | { type: 'select_product'; raw: Raw }
+  | { type: 'add_to_cart'; raw: Raw; variantRaw: Raw | null; selectedOptions: Record<string, string> }
+  | { type: 'update_qty'; lineId: string; qty: number }
+  | { type: 'remove_line'; lineId: string }
   | { type: 'refresh_cart' }
-  | { type: 'open_cart' }
-  | { type: 'checkout';         cartRaw: Raw | null }
-  | { type: 'checkout_action';  actionRaw: Raw }
+  | { type: 'checkout'; cartRaw: Raw }
+  | { type: 'checkout_action'; action: string; raw?: Raw }
+  | { type: 'open_cart'; raw?: Raw | null }
   | { type: 'continue_browsing' }
+  | { type: 'order_complete'; raw?: Raw | null }
   | { type: 'close' };
 
 export interface CommerceSnapshot {
