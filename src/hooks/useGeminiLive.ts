@@ -1,15 +1,9 @@
 import { useCallback, useRef, useState } from "react";
 import { GoogleGenAI, Modality, type LiveServerMessage } from "@google/genai";
-import { callCartMcp, isCartTool } from "../lib/MCP/cartCall";
-import { callCatalogMcp } from "../lib/MCP/catalogCall";
-import { callFaqMcp } from "../lib/MCP/faqCall";
+import { callShopMcp } from "../MCP/mcpCall";
 import { toast } from "sonner";
 
-import {
-  AGENT_SHOP_TOOLS,
-  AGENT_PROFILE_URL,
-  MCP_ENDPOINT,
-} from "../lib/GeminiTools";
+import { AGENT_SHOP_TOOLS } from "../lib/GeminiTools";
 
 const INPUT_RATE = 16000;
 const OUTPUT_RATE = 24000;
@@ -573,56 +567,9 @@ export function useGeminiLive(
                 for (const call of calls) {
                   const { name, args, id } = call;
 
-                  if (isCartTool(name ?? "")) {
-                    const toolData = await callCartMcp(name as any, id ?? "", args);
-
-                    (window as any).LiveCommerce?.ingest(toolData);
-                    onToolResult?.(toolData);
-
-                    sessionRef.current?.sendToolResponse({
-                      functionResponses: [
-                        {
-                          name,
-                          id,
-                          response: { result: toolData },
-                        },
-                      ],
-                    });
-
-                    continue;
-                  }
-
-                  if (
-                    name === "search_faq" ||
-                    name === "get_policy" ||
-                    name === "list_policies"
-                  ) {
-                    const faqRawBody = await callFaqMcp(name, id, args);
-                    const toolData = unwrapMcpResult(parseMcpResponse(faqRawBody));
-
-                    (window as any).LiveCommerce?.ingest(toolData);
-                    onToolResult?.(toolData);
-
-                    sessionRef.current?.sendToolResponse({
-                      functionResponses: [
-                        {
-                          name,
-                          id,
-                          response: { result: toolData },
-                        },
-                      ],
-                    });
-
-                    continue;
-                  }
-
-                  
-
-                  const mcpPayload = await callCatalogMcp(name ?? "", id ?? "", args);
-                  const toolData = unwrapMcpResult(mcpPayload);
+                  const toolData = await callShopMcp(name ?? "", id ?? "", args);
 
                   (window as any).LiveCommerce?.ingest(toolData);
-
                   onToolResult?.(toolData);
 
                   sessionRef.current?.sendToolResponse({
