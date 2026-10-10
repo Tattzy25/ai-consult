@@ -2,7 +2,7 @@ import React, { useRef } from 'react';
 import { Mic, MicOff, PhoneOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
-import { PhoneCallIcon, type PhoneCallIconHandle } from './components/ui/phone-call';
+import { PhoneCallIcon, type PhoneCallIconHandle } from './components/ui/PhoneCall';
 import { CameraPreview } from './components/video/CameraPreview';
 import { ConnectingOverlay } from './components/ui/ConnectingOverlay';
 import { WreckShader } from './components/WreckShader';

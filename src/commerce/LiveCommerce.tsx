@@ -35,7 +35,7 @@ import type {
 } from './types';
 import { routeResult } from './route';
 import { normalizeProduct, setPriceUnit } from './resolve';
-import { useCollections } from '../lib/MCP/useCollections';
+import { useCollections } from '../MCP/useCollections';
 
 export const PER_PAGE = 4;
 const OPT_PREVIEW = 8;      // option chips shown before "Show all N"

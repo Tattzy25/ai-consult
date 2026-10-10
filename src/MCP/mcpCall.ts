@@ -1,5 +1,5 @@
-import { AGENT_PROFILE_URL, MCP_ENDPOINT, getShopDomain } from "../GeminiTools/config";
-import { INTERNAL_TOOL_NAMES } from "./server.tools";
+import { AGENT_PROFILE_URL, MCP_ENDPOINT, getShopDomain } from "../config";
+import { INTERNAL_TOOL_NAMES } from "../lib/server.tools";
 
 type McpToolCallResult = {
   result?: unknown;
@@ -10,7 +10,8 @@ type McpToolCallResult = {
 /**
  * Redirect targets the dispatcher remembers from the latest server results.
  * Gemini never sends these — it just presses notify_*_redirect and the
- * dispatcher routes to wherever the merchant last pointed us.
+ * dispatcher routes to wherever the merchant last pointed us. Gemini Must send
+ * checkout and cart URLs in the original results, or else the dispatcher has no destination to open.
  */
 let cartUrl: string | null = null;
 let checkoutUrl: string | null = null;

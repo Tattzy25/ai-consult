@@ -1,6 +1,6 @@
-import { getShopDomain } from "../../config";
-import { callShopMcp } from "../../MCP/mcpCall";
-import { resolveProducts } from "../../commerce/resolve";
+import { getShopDomain } from "../config";
+import { callShopMcp } from "./mcpCall";
+import { resolveProducts } from "../commerce/resolve";
 
 /** Crawl-n-Store server — separate from the shop MCP endpoint. */
 const CRAWL_ENDPOINT = "https://crawl-n-store.anigok.com/mcp";

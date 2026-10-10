@@ -4,4 +4,4 @@ export {
   getShopDomain,
   AGENT_SHOP_TOOLS,
   INTERNAL_TOOL_NAMES,
-} from "../GeminiTools";
+} from ".";

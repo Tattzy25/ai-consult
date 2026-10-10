@@ -1,6 +1,6 @@
 export { AGENT_PROFILE_URL, MCP_ENDPOINT, getShopDomain } from "../config";
 
-import { SERVER_TOOL_DECLARATIONS, INTERNAL_TOOL_NAMES } from "../MCP/server.tools";
+import { SERVER_TOOL_DECLARATIONS, INTERNAL_TOOL_NAMES } from "./server.tools";
 
 /** One uniform tool list for the model: the dispatcher's tools plus the two
  *  host-only redirect buttons declared in the same array. */
